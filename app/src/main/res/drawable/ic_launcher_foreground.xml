@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer Glow -->
+    <path
+        android:pathData="M54,54m-32,0a32,32 0,1 1,64 0a32,32 0,1 1,-64 0"
+        android:fillColor="#00E5FF"
+        android:alpha="0.2" />
+
+    <!-- Main Bluetooth-like Shape / Companion Link -->
+    <path
+        android:pathData="M42,35 L66,54 L42,73 L42,35 M54,25 L54,83 M54,25 L68,39 M54,83 L68,69"
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- Notification/Link Dots -->
+    <path
+        android:pathData="M35,54m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M73,54m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"
+        android:fillColor="#FFFFFF" />
+</vector>
