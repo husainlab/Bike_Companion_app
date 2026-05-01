@@ -125,17 +125,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             },
-                            onStopServer = { stopServer() },
-                            onSimulateCall = {
-                                if (connectionStatus == "Connected") {
-                                    sendMessage("CALL_IN|Test Caller")
-                                } else {
-                                    Toast.makeText(this@MainActivity, "Connect first", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            onEndSimulatedCall = {
-                                sendMessage("CALL_END")
-                            }
+                            onStopServer = { stopServer() }
                         )
                     } else {
                         ReceiverScreen(
@@ -577,9 +567,7 @@ fun SenderScreen(
     onSwitchMode: () -> Unit,
     onRequestPermissions: () -> Unit,
     onStartServer: () -> Unit,
-    onStopServer: () -> Unit,
-    onSimulateCall: () -> Unit = {},
-    onEndSimulatedCall: () -> Unit = {}
+    onStopServer: () -> Unit
 ) {
     Column(
         modifier = Modifier.padding(32.dp),
