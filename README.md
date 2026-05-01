@@ -1,61 +1,36 @@
-# Bluetooth Companion App
+# Companion App 🚲
 
-A dual-purpose Android application designed to mirror phone status and control media/calls on a secondary device via Bluetooth. It is ideal for use cases where you want a secondary display (like a tablet or a car head unit) to act as a remote control and notification dashboard for your primary phone.
+A simple way to mirror your phone's notifications, music, and calls onto a second Android device. Perfect for using a spare phone or tablet as a dedicated dashboard for your bike or car.
 
-## Features
+## 📥 Download
+[**Download the latest APK here**](./CompanionApp.apk)
 
-- **Dual Mode Architecture**:
-  - **Sender Mode**: Installed on your primary phone. It monitors notifications, media, and calls.
-  - **Receiver Mode**: Installed on the display device. It shows a persistent, draggable overlay with all mirrored data.
-- **Notification Mirroring**: See incoming notifications from any app in real-time on the receiver device.
-- **Media Control & Sync**:
-  - View current song title, artist, and playback progress.
-  - Remote control playback (Play/Pause, Skip, Volume Up/Down) from the receiver.
-- **Call Management**:
-  - Incoming call alerts with caller name (Contact sync).
-  - Answer or Decline calls directly from the overlay widget.
-- **System Monitoring**: View the sender phone's battery percentage on the receiver.
-- **Persistent Overlay**: A modern, Jetpack Compose-based floating widget that stays on top of other apps.
-- **Auto-Reconnect**: Automatically attempts to restore the Bluetooth connection if lost.
+---
 
-## Permissions Required
+## 🚀 How to Use
 
-To function correctly, the app requires several sensitive permissions:
-- **Bluetooth**: For device discovery and communication.
-- **Notification Access**: Required for the Sender to read and forward notifications.
-- **Display Over Other Apps**: Required for the Receiver to show the floating overlay.
-- **Phone & Contacts**: To detect incoming calls and resolve phone numbers to contact names.
-- **Answer Phone Calls**: To allow remote answering/declining of calls.
+### 1. Preparation
+*   **Two Devices**: You need two Android phones (or a phone and a tablet).
+*   **Bluetooth Pairing**: Go to your Android system settings and pair both devices via Bluetooth before opening the app.
 
-## Getting Started
+### 2. Setup the "Sender" (Your Main Phone)
+This is the phone you will keep in your pocket. It sends music and notification data.
+1.  Open the app and select **Sender Mode**.
+2.  Tap **Start Server**.
+3.  When prompted, grant **Notification Access** so the app can see your incoming alerts.
 
-### Prerequisites
-- Two Android devices (Android 8.0+ recommended).
-- Devices must be paired via Android System Bluetooth settings before using the app.
+### 3. Setup the "Receiver" (The Display Device)
+This is the device you mount on your bike or dashboard.
+1.  Open the app and select **Receiver Mode**.
+2.  Tap **Connect to Sender** and select your main phone from the list.
+3.  Tap **Start Overlay Widget**. A floating bubble will appear that you can drag anywhere.
+4.  **Tip**: Tap the bubble to expand it and control your music or view notifications!
 
-### Installation
-1. Clone the repository.
-2. Build the APK using Gradle:
-   ```bash
-   ./gradlew :app:assembleDebug
-   ```
-3. Install the APK on both devices.
+---
 
-### Usage
-1. **On the Primary Phone (Sender)**:
-   - Open the app and switch to **Sender Mode**.
-   - Grant **Notification Access** when prompted.
-   - Tap **Start Server**.
-2. **On the Display Device (Receiver)**:
-   - Open the app and ensure it is in **Receiver Mode**.
-   - Tap **Connect to Sender** and select your primary phone from the paired devices list.
-   - Once connected, tap **Start Overlay Widget** (grant overlay permissions if needed).
-
-## Tech Stack
-- **Language**: Kotlin
-- **UI**: Jetpack Compose
-- **Communication**: Bluetooth RFCOMM (SPP Profile)
-- **Services**: `NotificationListenerService`, `Foreground Service`
-
-## License
-[MIT License](LICENSE)
+## 🛠 Required Permissions
+To work correctly, the app will ask for:
+*   **Bluetooth**: To connect the two devices.
+*   **Notifications**: So the Sender can "read" your alerts to show them on the other screen.
+*   **Display Over Apps**: So the Receiver can show the floating control bubble.
+*   **Phone/Contacts**: To show you who is calling on the dashboard.

@@ -2,10 +2,21 @@ package com.example.companionapp.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
+// Android 16 / Material You "Verdant Horizon" Palette
+val M3Primary = Color(0xFF006B5B)
+val M3OnPrimary = Color(0xFFFFFFFF)
+val M3PrimaryContainer = Color(0xFFCCE8E3)
+val M3OnPrimaryContainer = Color(0xFF00201A)
 
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
+val M3Secondary = Color(0xFF4B635C)
+val M3OnSecondary = Color(0xFFFFFFFF)
+val M3SecondaryContainer = Color(0xFFCCE8E3)
+val M3OnSecondaryContainer = Color(0xFF05201C)
+
+val M3Surface = Color(0xFFFBFDF9)
+val M3OnSurface = Color(0xFF191C1B)
+val M3SurfaceVariant = Color(0xFFDBE5E0)
+val M3OnSurfaceVariant = Color(0xFF3F4945)
+
+val M3Error = Color(0xFFBA1A1A)
+val M3OnError = Color(0xFFFFFFFF)
