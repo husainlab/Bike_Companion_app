@@ -304,8 +304,6 @@ class MainActivity : ComponentActivity() {
                     socket?.let { 
                         manageConnectedSocket(it)
                         // Wait for the connection thread to finish before accepting again
-                        // Or let it run in parallel if you want multiple connections, 
-                        // but here we want the server to return to accept() AFTER disconnect.
                         while (connectedThread?.isAlive == true && isServerRunning) {
                             delay(1000)
                         }
@@ -425,70 +423,64 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun handleIncomingCommand(path: String) {
-        val telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+    private fun handleIncomingCommand(command: String) {
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        
-        try {
-            when (path) {
-                "/call/answer" -> {
+        val telecomManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+        } else null
+
+        when (command) {
+            "/media/playpause" -> sendMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+            "/media/next" -> sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT)
+            "/media/prev" -> sendMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+            "/volume/up" -> audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+            "/volume/down" -> audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+            "/call/answer" -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED) {
-                        telecomManager.acceptRingingCall()
+                        telecomManager?.acceptRingingCall()
                     }
-                }
-                "/call/decline" -> {
-                    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED) {
-                        telecomManager.endCall()
-                    }
-                }
-                "/media/playpause" -> {
-                    audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
-                    audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
-                }
-                "/media/next" -> {
-                    audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT))
-                    audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_NEXT))
-                }
-                "/media/prev" -> {
-                    audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PREVIOUS))
-                    audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PREVIOUS))
-                }
-                "/volume/up" -> {
-                    audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
-                }
-                "/volume/down" -> {
-                    audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
                 }
             }
-        } catch (e: Exception) {
-            // Command execution failed
+            "/call/decline" -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED) {
+                        telecomManager?.endCall()
+                    }
+                }
+            }
         }
     }
 
+    private fun sendMediaKey(keyCode: Int) {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+        audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+    }
+
     private fun checkNotificationPermission(onGranted: (() -> Unit)? = null) {
-        val cn = ComponentName(this, CompanionNotificationListener::class.java)
-        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-        val enabled = flat != null && flat.contains(cn.flattenToString())
-        if (!enabled) {
-            Toast.makeText(this, "Please enable notification access for this app", Toast.LENGTH_LONG).show()
+        val nls = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+        if (nls == null || !nls.contains(packageName)) {
             startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+            Toast.makeText(this, "Please enable notification access for this app", Toast.LENGTH_LONG).show()
         } else {
             onGranted?.invoke()
         }
     }
 
-    private inner class ConnectedThread(private val socket: BluetoothSocket) : Thread() {
-        private val mmInStream: InputStream = socket.inputStream
-        private val mmOutStream: OutputStream = socket.outputStream
+    private inner class ConnectedThread(private val mmSocket: BluetoothSocket) : Thread() {
+        private val mmInStream: InputStream? = mmSocket.inputStream
+        private val mmOutStream: OutputStream? = mmSocket.outputStream
+        private val mmBuffer: ByteArray = ByteArray(1024)
 
         override fun run() {
-            val reader = mmInStream.bufferedReader()
+            var numBytes: Int
             while (true) {
                 try {
-                    val line = reader.readLine() ?: ""
-                    if (line.isNotEmpty()) {
-                        handleIncomingMessage(line)
-                    }
+                    numBytes = mmInStream?.read(mmBuffer) ?: -1
+                    if (numBytes == -1) break
+                    val message = String(mmBuffer, 0, numBytes)
+                    handleIncomingMessage(message)
                 } catch (e: IOException) {
                     updateStatus("Disconnected")
                     break
@@ -498,188 +490,16 @@ class MainActivity : ComponentActivity() {
 
         fun write(bytes: ByteArray) {
             try {
-                mmOutStream.write(bytes)
-                mmOutStream.write("\n".toByteArray())
-                mmOutStream.flush()
+                mmOutStream?.write(bytes)
             } catch (e: IOException) {
-                // Error writing
+                updateStatus("Send failed")
             }
         }
 
         fun cancel() {
             try {
-                socket.close()
-            } catch (e: IOException) {
-                // Error closing socket
-            }
-        }
-    }
-}
-
-@Composable
-fun DevicePickerDialog(devices: List<BluetoothDevice>, onDismiss: () -> Unit, onDeviceSelected: (BluetoothDevice) -> Unit) {
-    val M3Primary = Color(0xFF006B5B)
-    val M3Surface = Color(0xFFFBFDF9)
-    val M3OnSurface = Color(0xFF191C1B)
-    
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
-        containerColor = M3Surface,
-        title = { 
-            Text(
-                "Select Device", 
-                color = M3OnSurface, 
-                fontSize = 24.sp, 
-                fontWeight = FontWeight.Medium
-            ) 
-        },
-        text = {
-            Column {
-                Spacer(modifier = Modifier.height(8.dp))
-                LazyColumn {
-                    items(devices) { device ->
-                        @OptIn(ExperimentalMaterial3Api::class)
-                        ListItem(
-                            colors = ListItemDefaults.colors(
-                                containerColor = Color.Transparent,
-                                headlineColor = M3OnSurface,
-                                supportingColor = Color(0xFF4B635C)
-                            ),
-                            headlineContent = { 
-                                val name = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || ActivityCompat.checkSelfPermission(LocalContext.current, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                                    device.name ?: device.address
-                                } else {
-                                    device.address
-                                }
-                                Text(name, fontWeight = FontWeight.Bold)
-                            },
-                            supportingContent = {
-                                Text(device.address, fontSize = 12.sp)
-                            },
-                            modifier = Modifier
-                                .clickable { onDeviceSelected(device) }
-                                .padding(vertical = 4.dp)
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = { 
-            TextButton(
-                onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(contentColor = M3Primary)
-            ) { 
-                Text("Dismiss", fontWeight = FontWeight.Bold) 
-            } 
-        }
-    )
-}
-
-@Composable
-fun ReceiverScreen(
-    status: String,
-    batteryLevel: Int,
-    songTitle: String,
-    artistName: String,
-    onSwitchMode: () -> Unit,
-    onConnectClick: () -> Unit,
-    onStartOverlay: () -> Unit,
-    onStopOverlay: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Top
-    ) {
-        Spacer(modifier = Modifier.height(64.dp))
-        
-        Text(
-            "Companion Receiver", 
-            color = MaterialTheme.colorScheme.primary, 
-            style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold
-        )
-        
-        Spacer(modifier = Modifier.height(32.dp))
-        
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-        ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        if(status == "Connected") Icons.Default.CheckCircle else Icons.Default.Info, 
-                        null, 
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        status, 
-                        color = MaterialTheme.colorScheme.onSecondaryContainer, 
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                
-                if (status == "Connected") {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Battery: ${if(batteryLevel != -1) "$batteryLevel%" else "Unknown"}", color = MaterialTheme.colorScheme.onSecondaryContainer)
-                        Text(songTitle, color = MaterialTheme.colorScheme.primary, maxLines = 1, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(48.dp))
-        
-        Column(modifier = Modifier.fillMaxWidth()) {
-            if (status != "Connected") {
-                Button(
-                    onClick = onConnectClick, 
-                    modifier = Modifier.fillMaxWidth().height(64.dp),
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Icon(Icons.Default.Bluetooth, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Connect Device", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                }
-            } else {
-                Button(
-                    onClick = onStartOverlay, 
-                    modifier = Modifier.fillMaxWidth().height(64.dp),
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Text("Show Controls Overlay", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                FilledTonalButton(
-                    onClick = onStopOverlay, 
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    shape = CircleShape
-                ) {
-                    Text("Stop Service", color = MaterialTheme.colorScheme.error)
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(80.dp))
-            
-            OutlinedButton(
-                onClick = onSwitchMode, 
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = CircleShape
-            ) {
-                Text("Switch to Sender Mode", color = MaterialTheme.colorScheme.primary)
-            }
+                mmSocket.close()
+            } catch (e: IOException) {}
         }
     }
 }
@@ -696,94 +516,195 @@ fun SenderScreen(
     onStopServer: () -> Unit
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp),
+        modifier = Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Top
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Spacer(modifier = Modifier.height(64.dp))
-        
-        Text(
-            "Signal Sender", 
-            color = MaterialTheme.colorScheme.primary, 
-            style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold
-        )
-        
-        Spacer(modifier = Modifier.height(32.dp))
-        
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("SENDER MODE", style = MaterialTheme.typography.labelLarge, color = Color(0xFF006B5B), fontWeight = FontWeight.Black)
+            Button(onClick = onSwitchMode, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFCCE8E3), contentColor = Color(0xFF00201A))) {
+                Text("Switch to Receiver")
+            }
+        }
+
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if(isServerRunning) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
-            )
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, Color(0xFFDBE5E0))
         ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(12.dp).background(if(isServerRunning) MaterialTheme.colorScheme.primary else Color.Gray, CircleShape))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        if(isServerRunning) "Broadcasting Signal" else "Server Offline", 
-                        color = MaterialTheme.colorScheme.onSurface, 
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
+            Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    if (isServerRunning) Icons.Default.BluetoothAudio else Icons.Default.BluetoothDisabled,
+                    null,
+                    modifier = Modifier.size(48.dp),
+                    tint = if (isServerRunning) Color(0xFF006B5B) else Color.Gray
+                )
+                Spacer(Modifier.height(16.dp))
+                Text(status, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text("Bluetooth Server", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+            }
+        }
+
+        Button(
+            onClick = if (isServerRunning) onStopServer else onStartServer,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = CircleShape,
+            colors = ButtonDefaults.buttonColors(containerColor = if (isServerRunning) Color(0xFFBA1A1A) else Color(0xFF006B5B))
+        ) {
+            Text(if (isServerRunning) "Stop Server" else "Start Server")
+        }
+
+        OutlinedButton(
+            onClick = onRequestPermissions,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = CircleShape
+        ) {
+            Text("Repair Notification Access")
+        }
+
+        Spacer(Modifier.weight(1f))
+
+        Text("NOW STREAMING", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color.Gray)
+        Text(songTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, maxLines = 1)
+        Text(artistName, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(32.dp))
+    }
+}
+
+@Composable
+fun ReceiverScreen(
+    status: String,
+    batteryLevel: Int,
+    songTitle: String,
+    artistName: String,
+    onSwitchMode: () -> Unit,
+    onConnectClick: () -> Unit,
+    onStartOverlay: () -> Unit,
+    onStopOverlay: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("RECEIVER MODE", style = MaterialTheme.typography.labelLarge, color = Color(0xFF006B5B), fontWeight = FontWeight.Black)
+            Button(onClick = onSwitchMode, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFCCE8E3), contentColor = Color(0xFF00201A))) {
+                Text("Switch to Sender")
+            }
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.dp, Color(0xFFDBE5E0))
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Icon(Icons.Default.Link, null, tint = Color(0xFF006B5B))
+                    Text(status, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text("Connection", fontSize = 12.sp, color = Color.Gray)
                 }
-                
-                if (isServerRunning && status == "Connected") {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("Device Linked: $status", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+            }
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.dp, Color(0xFFDBE5E0))
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Icon(Icons.Default.BatteryChargingFull, null, tint = Color(0xFF006B5B))
+                    Text(if (batteryLevel == -1) "--%" else "$batteryLevel%", fontWeight = FontWeight.Bold)
+                    Text("Phone Battery", fontSize = 12.sp, color = Color.Gray)
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(48.dp))
-        
-        Column(modifier = Modifier.fillMaxWidth()) {
-            if (!isServerRunning) {
-                Button(
-                    onClick = onStartServer, 
-                    modifier = Modifier.fillMaxWidth().height(64.dp),
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Icon(Icons.Default.Podcasts, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Start Server", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                }
-            } else {
-                Button(
-                    onClick = onStopServer, 
-                    modifier = Modifier.fillMaxWidth().height(64.dp),
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Stop Broadcasting", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            FilledTonalButton(
-                onClick = onRequestPermissions, 
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = CircleShape
+        Spacer(Modifier.height(16.dp))
+
+        Button(
+            onClick = onConnectClick,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = CircleShape,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006B5B))
+        ) {
+            Icon(Icons.Default.Bluetooth, null)
+            Spacer(Modifier.width(8.dp))
+            Text("Connect to Sender")
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(
+                onClick = onStartOverlay,
+                modifier = Modifier.weight(1f).height(56.dp),
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4B635C))
             ) {
-                Text("Manage Permissions", color = MaterialTheme.colorScheme.primary)
+                Text("Start Overlay")
             }
-            
-            Spacer(modifier = Modifier.height(80.dp))
-            
             OutlinedButton(
-                onClick = onSwitchMode, 
-                modifier = Modifier.fillMaxWidth().height(56.dp),
+                onClick = onStopOverlay,
+                modifier = Modifier.weight(1f).height(56.dp),
                 shape = CircleShape
             ) {
-                Text("Switch to Receiver Mode", color = MaterialTheme.colorScheme.primary)
+                Text("Stop Overlay")
             }
         }
+
+        Spacer(Modifier.weight(1f))
+        
+        Surface(
+            color = Color(0xFFCCE8E3).copy(alpha = 0.5f),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Info, null, tint = Color(0xFF006B5B))
+                Spacer(Modifier.width(12.dp))
+                Text("Ensure the sender phone is paired in system settings first.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Spacer(Modifier.height(32.dp))
     }
+}
+
+@Composable
+fun DevicePickerDialog(
+    devices: List<BluetoothDevice>,
+    onDismiss: () -> Unit,
+    onDeviceSelected: (BluetoothDevice) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select Sender Device") },
+        text = {
+            LazyColumn {
+                items(devices) { device ->
+                    ListItem(
+                        headlineContent = { 
+                            if (ActivityCompat.checkSelfPermission(LocalContext.current, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                                Text(device.name ?: "Unknown Device")
+                            } else {
+                                Text("Unknown Device")
+                            }
+                        },
+                        supportingContent = { Text(device.address) },
+                        modifier = Modifier.clickable { onDeviceSelected(device) }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
