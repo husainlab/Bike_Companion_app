@@ -3,7 +3,7 @@
 A simple way to mirror your phone's notifications, music, and calls onto a second Android device. Perfect for using a spare phone or tablet as a dedicated dashboard for your bike or car.
 
 ## 📥 Download
-[**Download the latest APK here**](./CompanionApp.apk)
+[**Download the latest APK here**](https://github.com/husainlab/Bike_Companion_app/raw/main/CompanionApp.apk)
 
 ---
 
