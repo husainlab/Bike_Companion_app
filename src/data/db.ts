@@ -11,6 +11,7 @@ const DB_NAME = 'pillion.db';
 
 export class SqliteStore implements PillionStore {
   private dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+  private initPromise: Promise<void> | null = null;
   private initialized = false;
 
   private getDb(): Promise<SQLite.SQLiteDatabase> {
@@ -22,45 +23,57 @@ export class SqliteStore implements PillionStore {
 
   async init(): Promise<void> {
     if (this.initialized) return;
-    const db = await this.getDb();
-    await db.withExclusiveTransactionAsync(async (txn) => {
-      await txn.execAsync(`
-        PRAGMA journal_mode = WAL;
-        CREATE TABLE IF NOT EXISTS app_settings (
-          id INTEGER PRIMARY KEY CHECK (id = 1),
-          relay_mode TEXT NOT NULL,
-          theme TEXT NOT NULL,
-          keep_awake_on_ride INTEGER NOT NULL,
-          auto_start_overlay INTEGER NOT NULL,
-          onboarding_complete INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS paired_devices (
-          address TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          last_connected_at INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS ride_sessions (
-          id TEXT PRIMARY KEY,
-          mode TEXT NOT NULL,
-          device_name TEXT NOT NULL,
-          started_at INTEGER NOT NULL,
-          ended_at INTEGER,
-          notifications_relayed INTEGER NOT NULL
-        );
-      `);
-      await txn.runAsync(
-        `INSERT OR IGNORE INTO app_settings (id, relay_mode, theme, keep_awake_on_ride, auto_start_overlay, onboarding_complete)
-         VALUES (1, ?, ?, ?, ?, ?)`,
-        [
-          DEFAULT_APP_SETTINGS.relayMode,
-          DEFAULT_APP_SETTINGS.theme,
-          DEFAULT_APP_SETTINGS.keepAwakeOnRide ? 1 : 0,
-          DEFAULT_APP_SETTINGS.autoStartOverlay ? 1 : 0,
-          DEFAULT_APP_SETTINGS.onboardingComplete ? 1 : 0,
-        ]
+    if (this.initPromise) return this.initPromise;
+
+    this.initPromise = (async () => {
+      const db = await this.getDb();
+      // PRAGMA journal_mode = WAL cannot execute inside a transaction in SQLite.
+      await db.execAsync(
+        'PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;'
       );
+      await db.withExclusiveTransactionAsync(async (txn) => {
+        await txn.execAsync(`
+          CREATE TABLE IF NOT EXISTS app_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            relay_mode TEXT NOT NULL,
+            theme TEXT NOT NULL,
+            keep_awake_on_ride INTEGER NOT NULL,
+            auto_start_overlay INTEGER NOT NULL,
+            onboarding_complete INTEGER NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS paired_devices (
+            address TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            last_connected_at INTEGER NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS ride_sessions (
+            id TEXT PRIMARY KEY,
+            mode TEXT NOT NULL,
+            device_name TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            ended_at INTEGER,
+            notifications_relayed INTEGER NOT NULL
+          );
+        `);
+        await txn.runAsync(
+          `INSERT OR IGNORE INTO app_settings (id, relay_mode, theme, keep_awake_on_ride, auto_start_overlay, onboarding_complete)
+           VALUES (1, ?, ?, ?, ?, ?)`,
+          [
+            DEFAULT_APP_SETTINGS.relayMode,
+            DEFAULT_APP_SETTINGS.theme,
+            DEFAULT_APP_SETTINGS.keepAwakeOnRide ? 1 : 0,
+            DEFAULT_APP_SETTINGS.autoStartOverlay ? 1 : 0,
+            DEFAULT_APP_SETTINGS.onboardingComplete ? 1 : 0,
+          ]
+        );
+      });
+      this.initialized = true;
+    })().catch((err) => {
+      this.initPromise = null;
+      throw err;
     });
-    this.initialized = true;
+
+    return this.initPromise;
   }
 
   async getSettings(): Promise<AppSettings> {

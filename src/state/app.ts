@@ -44,7 +44,10 @@ export async function bootApp(): Promise<AppState> {
     await store.init();
     const settings = await store.getSettings();
     return setAppStateBooted(settings);
-  })();
+  })().catch((err) => {
+    bootPromise = null;
+    throw err;
+  });
 
   return bootPromise;
 }
