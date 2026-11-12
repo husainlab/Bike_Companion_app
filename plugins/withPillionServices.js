@@ -34,9 +34,14 @@ module.exports = function withPillionServices(config) {
       (q.package || []).some((p) => p.$?.['android:name'] === mapsPackage)
     );
     if (!hasMapsQuery) {
-      manifest.queries.push({
-        package: [{ $: { 'android:name': mapsPackage } }],
-      });
+      if (manifest.queries.length > 0) {
+        manifest.queries[0].package = manifest.queries[0].package || [];
+        manifest.queries[0].package.push({ $: { 'android:name': mapsPackage } });
+      } else {
+        manifest.queries.push({
+          package: [{ $: { 'android:name': mapsPackage } }],
+        });
+      }
     }
 
     const app = manifest.application?.[0];
@@ -74,6 +79,14 @@ module.exports = function withPillionServices(config) {
           'android:exported': 'false',
           'android:foregroundServiceType': 'specialUse',
         },
+        property: [
+          {
+            $: {
+              'android:name': 'android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE',
+              'android:value': 'Motorcycle handlebar Bluetooth cockpit floating overlay',
+            },
+          },
+        ],
       });
     }
 

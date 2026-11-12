@@ -16,9 +16,10 @@ modules/*/android/build/
 /google-maps-*.apk
 /uptodown-*.apk
 
-# Release keystores (public repo — store in GitHub Secrets)
-credentials/*.keystore
+# Keystores (release.keystore is committed intentionally to keep consistent APK updates)
 credentials/*.jks
+credentials/*.pem
+credentials/*.key
 
 # Local / OS / TypeScript
 .DS_Store

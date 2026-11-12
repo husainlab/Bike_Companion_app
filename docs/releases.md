@@ -14,9 +14,9 @@ flowchart LR
 ```
 
 ## Signing Configuration
-No keystore secrets are required. When `credentials/release.keystore` is absent, [withReleaseSigning.js](../plugins/withReleaseSigning.js) falls back to the standard Expo/Android `debug.keystore` so CI builds run out of the box with zero secrets.
+No GitHub Secrets are required. Release APKs are signed with the committed PKCS#12 keystore (`credentials/release.keystore`, alias `pillion-release`) wired through [withReleaseSigning.js](../plugins/withReleaseSigning.js) and [build-apk.yml](../.github/workflows/build-apk.yml), ensuring every release shares the exact same signing identity for seamless in-place updates.
 
-If you ever switch to a custom release keystore later, set `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and `RELEASE_KEY_PASSWORD` in your build environment (keeping `credentials/*.keystore` and `credentials/*.jks` gitignored).
+You can override the keystore location or credentials via `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and `RELEASE_KEY_PASSWORD` environment variables.
 
 ## In-App GitHub Releases Self-Updater
 

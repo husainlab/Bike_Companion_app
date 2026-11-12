@@ -100,6 +100,8 @@ module.exports = function withAppShortcuts(config) {
         android:shortcutLongLabel="@string/shortcut_receiver_long">
         <intent
             android:action="android.intent.action.VIEW"
+            android:targetPackage="com.husainlab.pillion"
+            android:targetClass="com.husainlab.pillion.MainActivity"
             android:data="pillion://receiver" />
     </shortcut>
     <shortcut
@@ -110,6 +112,8 @@ module.exports = function withAppShortcuts(config) {
         android:shortcutLongLabel="@string/shortcut_sender_long">
         <intent
             android:action="android.intent.action.VIEW"
+            android:targetPackage="com.husainlab.pillion"
+            android:targetClass="com.husainlab.pillion.MainActivity"
             android:data="pillion://sender" />
     </shortcut>
 </shortcuts>

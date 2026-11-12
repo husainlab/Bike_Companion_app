@@ -17,9 +17,9 @@ module.exports = function withReleaseSigning(config) {
             def resolvedStore = file(storePath)
             if (resolvedStore.exists()) {
                 storeFile resolvedStore
-                storePassword System.getenv("RELEASE_STORE_PASSWORD")
-                keyAlias System.getenv("RELEASE_KEY_ALIAS")
-                keyPassword System.getenv("RELEASE_KEY_PASSWORD")
+                storePassword System.getenv("RELEASE_STORE_PASSWORD") ?: "Pillion_c7f0c1ca5b2dfcde602c"
+                keyAlias System.getenv("RELEASE_KEY_ALIAS") ?: "pillion-release"
+                keyPassword System.getenv("RELEASE_KEY_PASSWORD") ?: "Pillion_c7f0c1ca5b2dfcde602c"
                 v1SigningEnabled true
                 v2SigningEnabled true
             }

@@ -65,6 +65,10 @@ jobs:
       - name: Build release APK
         working-directory: android
         env:
+          RELEASE_STORE_FILE: ${{ github.workspace }}/credentials/release.keystore
+          RELEASE_STORE_PASSWORD: Pillion_c7f0c1ca5b2dfcde602c
+          RELEASE_KEY_ALIAS: pillion-release
+          RELEASE_KEY_PASSWORD: Pillion_c7f0c1ca5b2dfcde602c
           ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
           GRADLE_OPTS: -Xmx4096m -XX:MaxMetaspaceSize=1024m -Dorg.gradle.jvmargs=-Xmx4096m -Dorg.gradle.workers.max=2 -Dorg.gradle.parallel=true
         run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
@@ -102,8 +106,8 @@ jobs:
           FINAL_VER=""
           for attempt in 1 2 3 4 5; do
             git fetch origin main
-            git checkout -B main origin/main
             git reset --hard origin/main
+            git checkout -B main origin/main
 
             FINAL_VER=$(node -e "import('./scripts/bump-version.mjs').then(m => console.log(m.bumpProjectVersions().newVersion))")
 
