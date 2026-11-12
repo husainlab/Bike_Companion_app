@@ -7,6 +7,7 @@ export function requiredAndroidPermissions(): Permission[] {
     PermissionsAndroid.PERMISSIONS.READ_PHONE_STATE,
     PermissionsAndroid.PERMISSIONS.READ_CALL_LOG,
     PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
+    PermissionsAndroid.PERMISSIONS.CALL_PHONE,
   ];
   if (api >= 26 && PermissionsAndroid.PERMISSIONS.ANSWER_PHONE_CALLS) {
     list.push(PermissionsAndroid.PERMISSIONS.ANSWER_PHONE_CALLS);

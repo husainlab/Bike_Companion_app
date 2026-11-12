@@ -54,6 +54,12 @@ export async function openOverlayPermissionSettings(): Promise<void> {
   await PillionNative?.openOverlaySettings();
 }
 
+export type {
+  MirrorNotification,
+  RecentCallEntry,
+  SyncedContact,
+} from '../../modules/pillion-native';
+
 export async function sendCockpitCommand(
   path:
     | '/media/playpause'
@@ -63,8 +69,42 @@ export async function sendCockpitCommand(
     | '/volume/down'
     | '/call/answer'
     | '/call/decline'
+    | '/sync/contacts'
+    | `/call/dial|${string}`
+    | `/notif/dismiss|${string}`
+    | `/notif/reply|${string}|${string}`
 ): Promise<void> {
   await PillionNative?.sendCommand(path);
+}
+
+export async function dialContactNumber(phoneNumber: string): Promise<void> {
+  const cleaned = phoneNumber.trim();
+  if (!cleaned) return;
+  await sendCockpitCommand(`/call/dial|${cleaned}`);
+}
+
+export async function syncCompanionContacts(): Promise<void> {
+  await PillionNative?.syncContacts();
+  await sendCockpitCommand('/sync/contacts');
+}
+
+export async function dismissMirroredNotification(key: string): Promise<void> {
+  if (!key) return;
+  await sendCockpitCommand(`/notif/dismiss|${key}`);
+}
+
+export async function replyToMirroredNotification(
+  key: string,
+  text: string
+): Promise<void> {
+  const cleaned = text.trim();
+  if (!key || !cleaned) return;
+  await sendCockpitCommand(`/notif/reply|${key}|${cleaned}`);
+}
+
+export async function launchLocalGoogleMaps(splitScreen: boolean): Promise<boolean> {
+  if (!PillionNative) return false;
+  return await PillionNative.launchGoogleMaps(splitScreen);
 }
 
 export function subscribeCompanionState(

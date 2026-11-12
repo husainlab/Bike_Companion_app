@@ -13,6 +13,9 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.provider.CallLog
+import android.provider.ContactsContract
 import android.provider.Settings
 import android.telecom.TelecomManager
 import android.view.KeyEvent
@@ -37,6 +40,8 @@ class PillionNativeModule : Module() {
     private val APP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     private const val PREFS_NAME = "pillion_native_prefs"
     private const val PREF_LAST_DEVICE = "last_device"
+    private const val MAX_SYNC_CONTACTS = 250
+    private const val MAX_SYNC_RECENTS = 25
   }
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -157,13 +162,50 @@ class PillionNativeModule : Module() {
     AsyncFunction("sendCommand") { path: String ->
       PillionStateStore.sendMessage(path)
     }
+
+    AsyncFunction("syncContacts") {
+      if (isSenderMode) {
+        scope.launch { syncContactsAndRecents() }
+      } else {
+        PillionStateStore.sendMessage("/sync/contacts")
+      }
+    }
+
+    AsyncFunction("launchGoogleMaps") { splitScreen: Boolean ->
+      launchGoogleMapsInternal(splitScreen)
+    }
+  }
+
+  private fun launchGoogleMapsInternal(splitScreen: Boolean): Boolean {
+    if (Settings.canDrawOverlays(context) && !PillionStateStore.isOverlayRunning) {
+      try {
+        context.startService(Intent(context, PillionOverlayService::class.java))
+      } catch (_: Exception) {}
+    }
+
+    val mapsPkg = "com.google.android.apps.maps"
+    val launchIntent = context.packageManager.getLaunchIntentForPackage(mapsPkg)
+      ?: Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0"))
+
+    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    if (splitScreen && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+      launchIntent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
+    }
+
+    return try {
+      context.startActivity(launchIntent)
+      true
+    } catch (_: Exception) {
+      false
+    }
   }
 
   private fun hasRequiredPermissions(): Boolean {
     val permissions = mutableListOf(
       Manifest.permission.READ_PHONE_STATE,
       Manifest.permission.READ_CALL_LOG,
-      Manifest.permission.READ_CONTACTS
+      Manifest.permission.READ_CONTACTS,
+      Manifest.permission.CALL_PHONE
     )
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
@@ -327,6 +369,174 @@ class PillionNativeModule : Module() {
     connectedThread?.cancel()
     connectedThread = ConnectedThread(socket).also { it.start() }
     context.sendBroadcast(Intent(PillionProtocol.ACTION_SYNC))
+    if (isSenderMode) {
+      scope.launch {
+        delay(350)
+        syncContactsAndRecents()
+      }
+    } else {
+      scope.launch {
+        delay(450)
+        PillionStateStore.sendMessage("/sync/contacts")
+      }
+    }
+  }
+
+  private fun normalizePhoneKey(raw: String): String =
+    raw.filter { it.isDigit() || it == '+' }.takeLast(10)
+
+  private fun syncContactsAndRecents() {
+    val contacts = readDeviceContacts()
+    val recents = readRecentCalls()
+
+    PillionStateStore.setContacts(contacts)
+    PillionStateStore.setRecentCalls(recents)
+    PillionStateStore.notifyChanged()
+
+    if (connectedThread == null) return
+
+    PillionStateStore.sendMessage("CONTACTS_BEGIN")
+    for (c in contacts) {
+      val starredFlag = if (c.isStarred) "1" else "0"
+      PillionStateStore.sendMessage(
+        "CONTACT|${PillionProtocol.sanitizeField(c.id)}|${PillionProtocol.sanitizeField(c.name)}|${PillionProtocol.sanitizeField(c.phoneNumber)}|$starredFlag"
+      )
+    }
+    PillionStateStore.sendMessage("CONTACTS_END")
+
+    PillionStateStore.sendMessage("RECENTS_BEGIN")
+    for (r in recents) {
+      PillionStateStore.sendMessage(
+        "RECENT|${PillionProtocol.sanitizeField(r.id)}|${PillionProtocol.sanitizeField(r.name)}|${PillionProtocol.sanitizeField(r.phoneNumber)}|${r.callType}|${r.timestampMs}"
+      )
+    }
+    PillionStateStore.sendMessage("RECENTS_END")
+  }
+
+  private fun readDeviceContacts(): List<SyncedContact> {
+    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+      return emptyList()
+    }
+    val results = mutableListOf<SyncedContact>()
+    val seenKeys = HashSet<String>()
+    val projection = arrayOf(
+      ContactsContract.CommonDataKinds.Phone._ID,
+      ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+      ContactsContract.CommonDataKinds.Phone.NUMBER,
+      ContactsContract.CommonDataKinds.Phone.STARRED
+    )
+    val sortOrder = "${ContactsContract.CommonDataKinds.Phone.STARRED} DESC, ${ContactsContract.CommonDataKinds.Phone.TIMES_CONTACTED} DESC, ${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
+
+    try {
+      context.contentResolver.query(
+        ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+        projection,
+        null,
+        null,
+        sortOrder
+      )?.use { cursor ->
+        val idxId = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone._ID)
+        val idxName = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+        val idxNum = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+        val idxStar = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.STARRED)
+
+        while (cursor.moveToNext() && results.size < MAX_SYNC_CONTACTS) {
+          val rawNum = cursor.getString(idxNum)?.trim() ?: continue
+          val key = normalizePhoneKey(rawNum)
+          if (key.length < 3 || !seenKeys.add(key)) continue
+          val id = if (idxId >= 0) cursor.getString(idxId) ?: "$key-${results.size}" else "$key-${results.size}"
+          val name = (if (idxName >= 0) cursor.getString(idxName) else null)?.trim().orEmpty().ifEmpty { rawNum }
+          val starred = idxStar >= 0 && cursor.getInt(idxStar) == 1
+          results.add(SyncedContact(id = id, name = name, phoneNumber = rawNum, isStarred = starred))
+        }
+      }
+    } catch (_: Exception) {}
+    return results
+  }
+
+  private fun readRecentCalls(): List<RecentCallEntry> {
+    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
+      return emptyList()
+    }
+    val results = mutableListOf<RecentCallEntry>()
+    val projection = arrayOf(
+      CallLog.Calls._ID,
+      CallLog.Calls.CACHED_NAME,
+      CallLog.Calls.NUMBER,
+      CallLog.Calls.TYPE,
+      CallLog.Calls.DATE
+    )
+    try {
+      context.contentResolver.query(
+        CallLog.Calls.CONTENT_URI,
+        projection,
+        null,
+        null,
+        "${CallLog.Calls.DATE} DESC"
+      )?.use { cursor ->
+        val idxId = cursor.getColumnIndex(CallLog.Calls._ID)
+        val idxName = cursor.getColumnIndex(CallLog.Calls.CACHED_NAME)
+        val idxNum = cursor.getColumnIndex(CallLog.Calls.NUMBER)
+        val idxType = cursor.getColumnIndex(CallLog.Calls.TYPE)
+        val idxDate = cursor.getColumnIndex(CallLog.Calls.DATE)
+
+        while (cursor.moveToNext() && results.size < MAX_SYNC_RECENTS) {
+          val num = cursor.getString(idxNum)?.trim().orEmpty()
+          if (num.isEmpty()) continue
+          val id = if (idxId >= 0) cursor.getString(idxId) ?: "${results.size}" else "${results.size}"
+          val name = (if (idxName >= 0) cursor.getString(idxName) else null)?.trim().orEmpty().ifEmpty { num }
+          val callType = if (idxType >= 0) cursor.getInt(idxType) else CallLog.Calls.INCOMING_TYPE
+          val dateMs = if (idxDate >= 0) cursor.getLong(idxDate) else 0L
+          results.add(
+            RecentCallEntry(
+              id = id,
+              name = name,
+              phoneNumber = num,
+              callType = callType,
+              timestampMs = dateMs
+            )
+          )
+        }
+      }
+    } catch (_: Exception) {}
+    return results
+  }
+
+  private fun lookupDisplayName(number: String): String {
+    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+      return number
+    }
+    return try {
+      val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
+      context.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) cursor.getString(0) ?: number else number
+      } ?: number
+    } catch (_: Exception) {
+      number
+    }
+  }
+
+  private fun placeOutgoingCall(rawNumber: String) {
+    val clean = rawNumber.trim()
+    if (clean.isEmpty()) return
+    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
+      return
+    }
+    val uri = Uri.fromParts("tel", clean, null)
+    val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+    val display = PillionProtocol.sanitizeField(lookupDisplayName(clean))
+    PillionStateStore.sendMessage("CALL_ACTIVE|$display|${PillionProtocol.sanitizeField(clean)}")
+
+    try {
+      telecomManager.placeCall(uri, Bundle())
+    } catch (_: Exception) {
+      try {
+        val intent = Intent(Intent.ACTION_CALL, uri).apply {
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+      } catch (_: Exception) {}
+    }
   }
 
   private fun updateStatus(status: String) {
@@ -339,37 +549,64 @@ class PillionNativeModule : Module() {
     val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     try {
-      when (path) {
-        "/call/answer" -> {
-          if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED) {
+      when {
+        path == "/call/answer" -> {
+          val answeredByNotif = PillionStateStore.callActionFallbackHandler?.invoke(true) == true
+          if (!answeredByNotif &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED
+          ) {
             @Suppress("DEPRECATION")
             telecomManager.acceptRingingCall()
           }
         }
-        "/call/decline" -> {
+        path == "/call/decline" -> {
+          var ended = false
           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
             ActivityCompat.checkSelfPermission(context, Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED
           ) {
             @Suppress("DEPRECATION")
-            telecomManager.endCall()
+            ended = telecomManager.endCall()
+          }
+          if (!ended) {
+            PillionStateStore.callActionFallbackHandler?.invoke(false)
           }
         }
-        "/media/playpause" -> {
+        path.startsWith("/call/dial|") -> {
+          val number = path.removePrefix("/call/dial|")
+          placeOutgoingCall(number)
+        }
+        path == "/sync/contacts" -> {
+          scope.launch { syncContactsAndRecents() }
+        }
+        path.startsWith("/notif/dismiss|") -> {
+          val key = path.removePrefix("/notif/dismiss|")
+          PillionStateStore.notificationDismissHandler?.invoke(key)
+        }
+        path.startsWith("/notif/reply|") -> {
+          val payload = path.removePrefix("/notif/reply|")
+          val sep = payload.indexOf('|')
+          if (sep > 0) {
+            val key = payload.substring(0, sep)
+            val replyText = payload.substring(sep + 1)
+            PillionStateStore.notificationReplyHandler?.invoke(key, replyText)
+          }
+        }
+        path == "/media/playpause" -> {
           audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
           audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
         }
-        "/media/next" -> {
+        path == "/media/next" -> {
           audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT))
           audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_NEXT))
         }
-        "/media/prev" -> {
+        path == "/media/prev" -> {
           audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PREVIOUS))
           audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PREVIOUS))
         }
-        "/volume/up" -> {
+        path == "/volume/up" -> {
           audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
         }
-        "/volume/down" -> {
+        path == "/volume/down" -> {
           audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
         }
       }
@@ -389,13 +626,32 @@ class PillionNativeModule : Module() {
     "isCallActive" to PillionStateStore.isCallActive,
     "isCallIncoming" to PillionStateStore.isCallIncoming,
     "callerName" to PillionStateStore.callerName,
+    "callerNumber" to PillionStateStore.callerNumber,
     "notifications" to PillionStateStore.getNotifications().map {
       mapOf(
         "key" to it.key,
         "packageName" to it.packageName,
         "title" to it.title,
         "text" to it.text,
-        "receivedAt" to it.receivedAt.toDouble()
+        "receivedAt" to it.receivedAt.toDouble(),
+        "canReply" to it.canReply
+      )
+    },
+    "contacts" to PillionStateStore.getContacts().map {
+      mapOf(
+        "id" to it.id,
+        "name" to it.name,
+        "phoneNumber" to it.phoneNumber,
+        "isStarred" to it.isStarred
+      )
+    },
+    "recentCalls" to PillionStateStore.getRecentCalls().map {
+      mapOf(
+        "id" to it.id,
+        "name" to it.name,
+        "phoneNumber" to it.phoneNumber,
+        "callType" to it.callType,
+        "timestampMs" to it.timestampMs.toDouble()
       )
     },
     "hasNotificationAccess" to hasNotificationAccess(),
@@ -438,4 +694,3 @@ class PillionNativeModule : Module() {
     }
   }
 }
-

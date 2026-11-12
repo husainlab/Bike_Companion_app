@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   clampProgress,
+  filterContacts,
   formatBatteryLabel,
+  formatCallTypeLabel,
   isBatteryLow,
   resolveLinkBadge,
+  RIDING_QUICK_REPLIES,
 } from './cockpit';
 
 describe('cockpit pure domain helpers', () => {
@@ -47,6 +50,25 @@ describe('cockpit pure domain helpers', () => {
     expect(isBatteryLow(21)).toBe(false);
     expect(formatBatteryLabel(-1)).toBe('--%');
     expect(formatBatteryLabel(87.4)).toBe('87%');
+  });
+
+  it('filters contacts by name or digits and keeps starred entries first', () => {
+    const sample = [
+      { id: '1', name: 'Zed', phoneNumber: '+1 555-0102', isStarred: false },
+      { id: '2', name: 'Alice', phoneNumber: '+1 555-0199', isStarred: false },
+      { id: '3', name: 'Mom', phoneNumber: '+1 555-0100', isStarred: true },
+    ];
+    expect(filterContacts(sample, '').map((c) => c.id)).toEqual(['3', '2', '1']);
+    expect(filterContacts(sample, '5550199').map((c) => c.id)).toEqual(['2']);
+    expect(filterContacts(sample, 'mom').map((c) => c.id)).toEqual(['3']);
+  });
+
+  it('formats call log types and exposes riding quick replies', () => {
+    expect(formatCallTypeLabel(1)).toBe('INCOMING');
+    expect(formatCallTypeLabel(2)).toBe('OUTGOING');
+    expect(formatCallTypeLabel(3)).toBe('MISSED');
+    expect(formatCallTypeLabel(99)).toBe('CALL');
+    expect(RIDING_QUICK_REPLIES.length).toBeGreaterThanOrEqual(2);
   });
 });
 

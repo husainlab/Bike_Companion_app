@@ -22,6 +22,22 @@ export interface MirrorNotification {
   title: string;
   text: string;
   receivedAt: number;
+  canReply: boolean;
+}
+
+export interface SyncedContact {
+  id: string;
+  name: string;
+  phoneNumber: string;
+  isStarred: boolean;
+}
+
+export interface RecentCallEntry {
+  id: string;
+  name: string;
+  phoneNumber: string;
+  callType: number;
+  timestampMs: number;
 }
 
 export interface CompanionSnapshot {
@@ -37,7 +53,10 @@ export interface CompanionSnapshot {
   isCallActive: boolean;
   isCallIncoming: boolean;
   callerName: string;
+  callerNumber: string;
   notifications: MirrorNotification[];
+  contacts: SyncedContact[];
+  recentCalls: RecentCallEntry[];
   hasNotificationAccess: boolean;
   hasOverlayPermission: boolean;
   hasRuntimePermissions: boolean;
@@ -56,6 +75,8 @@ type PillionNativeModuleInterface = {
   setAutoReconnect(enabled: boolean): Promise<void>;
   startOverlay(): Promise<boolean>;
   stopOverlay(): Promise<void>;
+  syncContacts(): Promise<void>;
+  launchGoogleMaps(splitScreen: boolean): Promise<boolean>;
   sendCommand(path: string): Promise<void>;
   addListener?(
     eventName: 'onStateChange',
@@ -81,7 +102,10 @@ export const EMPTY_SNAPSHOT: CompanionSnapshot = {
   isCallActive: false,
   isCallIncoming: false,
   callerName: '',
+  callerNumber: '',
   notifications: [],
+  contacts: [],
+  recentCalls: [],
   hasNotificationAccess: false,
   hasOverlayPermission: false,
   hasRuntimePermissions: false,

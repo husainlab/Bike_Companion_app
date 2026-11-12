@@ -13,6 +13,8 @@ expo-env.d.ts
 .vitest/
 *.db
 modules/*/android/build/
+/google-maps-*.apk
+/uptodown-*.apk
 
 # Release keystores (public repo — store in GitHub Secrets)
 credentials/*.keystore

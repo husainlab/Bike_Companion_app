@@ -2,6 +2,7 @@ package com.husainlab.pillion.nativecore
 
 import android.Manifest
 import android.app.Notification
+import android.app.RemoteInput
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -15,6 +16,7 @@ import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Bundle
 import android.provider.ContactsContract
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -22,10 +24,24 @@ import android.telephony.PhoneStateListener
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import androidx.core.app.ActivityCompat
+import java.util.concurrent.ConcurrentHashMap
 
 class PillionNotificationListener : NotificationListenerService() {
+  private data class StoredNotificationEntry(
+    val rawKey: String,
+    val replyAction: Notification.Action?,
+    val remoteInputs: Array<RemoteInput>?
+  )
+
   private var mediaSessionManager: MediaSessionManager? = null
   private val activeControllers = mutableMapOf<MediaController, MediaController.Callback>()
+  private val trackedNotifications = ConcurrentHashMap<String, StoredNotificationEntry>()
+
+  @Volatile private var activeCallAnswerAction: Notification.Action? = null
+  @Volatile private var activeCallDeclineAction: Notification.Action? = null
+  @Volatile private var lastCallerName: String = ""
+  @Volatile private var lastCallerNumber: String = ""
+
   private var lastTitle = ""
   private var lastArtist = ""
   private var isCallListenerRegistered = false
@@ -44,6 +60,7 @@ class PillionNotificationListener : NotificationListenerService() {
             PillionStateStore.sendMessage("BATTERY|$level")
           }
           checkAndSendMediaUpdate()
+          PillionStateStore.sendMessage("NOTIF_CLEAR_ALL")
           try {
             activeNotifications?.forEach { sbn ->
               onNotificationPosted(sbn)
@@ -55,11 +72,24 @@ class PillionNotificationListener : NotificationListenerService() {
           val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
           when (state) {
             TelephonyManager.EXTRA_STATE_RINGING -> {
-              val caller = if (number.isNullOrEmpty()) "Incoming Call" else getContactName(number)
-              PillionStateStore.sendMessage("CALL_IN|${PillionProtocol.sanitizeField(caller)}")
+              if (!number.isNullOrEmpty()) {
+                lastCallerNumber = PillionProtocol.sanitizeField(number)
+                lastCallerName = PillionProtocol.sanitizeField(getContactName(number))
+              }
+              val name = lastCallerName.ifEmpty { "Incoming Call" }
+              PillionStateStore.sendMessage("CALL_IN|$name|$lastCallerNumber")
             }
-            TelephonyManager.EXTRA_STATE_IDLE -> PillionStateStore.sendMessage("CALL_END")
-            TelephonyManager.EXTRA_STATE_OFFHOOK -> PillionStateStore.sendMessage("CALL_ACTIVE")
+            TelephonyManager.EXTRA_STATE_IDLE -> {
+              lastCallerName = ""
+              lastCallerNumber = ""
+              activeCallAnswerAction = null
+              activeCallDeclineAction = null
+              PillionStateStore.sendMessage("CALL_END")
+            }
+            TelephonyManager.EXTRA_STATE_OFFHOOK -> {
+              val name = lastCallerName.ifEmpty { "Active Call" }
+              PillionStateStore.sendMessage("CALL_ACTIVE|$name|$lastCallerNumber")
+            }
           }
         }
       }
@@ -94,6 +124,7 @@ class PillionNotificationListener : NotificationListenerService() {
   override fun onListenerConnected() {
     super.onListenerConnected()
     setupCallListener()
+    registerHandlers()
 
     val intentFilter = IntentFilter().apply {
       addAction(PillionProtocol.ACTION_SYNC)
@@ -129,12 +160,66 @@ class PillionNotificationListener : NotificationListenerService() {
 
   override fun onListenerDisconnected() {
     super.onListenerDisconnected()
+    PillionStateStore.notificationDismissHandler = null
+    PillionStateStore.notificationReplyHandler = null
+    PillionStateStore.callActionFallbackHandler = null
+    trackedNotifications.clear()
     mediaSessionManager?.removeOnActiveSessionsChangedListener(sessionListener)
     try {
       unregisterReceiver(batteryReceiver)
       unregisterReceiver(syncReceiver)
     } catch (_: Exception) {}
     removeAllCallbacks()
+  }
+
+  private fun registerHandlers() {
+    PillionStateStore.notificationDismissHandler = { escapedKey ->
+      val rawKey = trackedNotifications[escapedKey]?.rawKey ?: PillionProtocol.unescapeKey(escapedKey)
+      try {
+        cancelNotification(rawKey)
+        trackedNotifications.remove(escapedKey)
+        PillionStateStore.sendMessage("NOTIF_REMOVE|$escapedKey")
+        true
+      } catch (_: Exception) {
+        false
+      }
+    }
+
+    PillionStateStore.notificationReplyHandler = { escapedKey, replyText ->
+      val entry = trackedNotifications[escapedKey]
+      val action = entry?.replyAction
+      val inputs = entry?.remoteInputs
+      if (action?.actionIntent != null && !inputs.isNullOrEmpty() && replyText.isNotBlank()) {
+        try {
+          val replyIntent = Intent()
+          val bundle = Bundle()
+          for (input in inputs) {
+            bundle.putCharSequence(input.resultKey, replyText)
+          }
+          RemoteInput.addResultsToIntent(inputs, replyIntent, bundle)
+          action.actionIntent.send(this, 0, replyIntent)
+          true
+        } catch (_: Exception) {
+          false
+        }
+      } else {
+        false
+      }
+    }
+
+    PillionStateStore.callActionFallbackHandler = { isAnswer ->
+      val action = if (isAnswer) activeCallAnswerAction else activeCallDeclineAction
+      if (action?.actionIntent != null) {
+        try {
+          action.actionIntent.send()
+          true
+        } catch (_: Exception) {
+          false
+        }
+      } else {
+        false
+      }
+    }
   }
 
   private fun updateControllers(controllers: List<MediaController>?) {
@@ -246,23 +331,73 @@ class PillionNotificationListener : NotificationListenerService() {
   private fun handleCallState(state: Int, phoneNumber: String?) {
     when (state) {
       TelephonyManager.CALL_STATE_RINGING -> {
-        val caller = if (phoneNumber.isNullOrEmpty()) "Incoming Call" else getContactName(phoneNumber)
-        PillionStateStore.sendMessage("CALL_IN|${PillionProtocol.sanitizeField(caller)}")
+        if (!phoneNumber.isNullOrEmpty()) {
+          lastCallerNumber = PillionProtocol.sanitizeField(phoneNumber)
+          lastCallerName = PillionProtocol.sanitizeField(getContactName(phoneNumber))
+        }
+        val name = lastCallerName.ifEmpty { "Incoming Call" }
+        PillionStateStore.sendMessage("CALL_IN|$name|$lastCallerNumber")
       }
-      TelephonyManager.CALL_STATE_IDLE -> PillionStateStore.sendMessage("CALL_END")
-      TelephonyManager.CALL_STATE_OFFHOOK -> PillionStateStore.sendMessage("CALL_ACTIVE")
+      TelephonyManager.CALL_STATE_IDLE -> {
+        lastCallerName = ""
+        lastCallerNumber = ""
+        activeCallAnswerAction = null
+        activeCallDeclineAction = null
+        PillionStateStore.sendMessage("CALL_END")
+      }
+      TelephonyManager.CALL_STATE_OFFHOOK -> {
+        val name = lastCallerName.ifEmpty { "Active Call" }
+        PillionStateStore.sendMessage("CALL_ACTIVE|$name|$lastCallerNumber")
+      }
     }
   }
 
-  override fun onNotificationPosted(sbn: StatusBarNotification) {
-    if (sbn.isOngoing) return
+  private fun captureCallActions(notification: Notification) {
+    val actions = notification.actions ?: return
+    for (action in actions) {
+      val titleLower = action.title?.toString()?.lowercase() ?: ""
+      val semantic = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) action.semanticAction else 0
+      val isAnswer = titleLower.contains("answer") || titleLower.contains("accept")
+      val isDecline = titleLower.contains("decline") || titleLower.contains("reject") ||
+        titleLower.contains("hang") || titleLower.contains("end") || titleLower.contains("dismiss")
+      if (semantic == Notification.Action.SEMANTIC_ACTION_DELETE || isDecline) {
+        activeCallDeclineAction = action
+      } else if (isAnswer) {
+        activeCallAnswerAction = action
+      }
+    }
+  }
 
+  private fun findReplyAction(notification: Notification): Pair<Notification.Action, Array<RemoteInput>>? {
+    val actions = notification.actions ?: return null
+    for (action in actions) {
+      val inputs = action.remoteInputs
+      if (!inputs.isNullOrEmpty() && action.actionIntent != null) {
+        return action to inputs
+      }
+    }
+    return null
+  }
+
+  override fun onNotificationPosted(sbn: StatusBarNotification) {
     val category = sbn.notification.category
     if (category == Notification.CATEGORY_CALL) {
+      captureCallActions(sbn.notification)
       val extras = sbn.notification.extras
       val callerTitle = PillionProtocol.sanitizeField(extras.getString("android.title") ?: "Incoming Call")
-      PillionStateStore.sendMessage("CALL_IN|$callerTitle")
+      if (callerTitle.isNotEmpty()) {
+        lastCallerName = callerTitle
+      }
+      val textHint = PillionProtocol.sanitizeField(extras.getCharSequence("android.text")?.toString() ?: "")
+      if (textHint.lowercase().contains("ongoing") || textHint.lowercase().contains("active") || textHint.lowercase().contains("dialing")) {
+        PillionStateStore.sendMessage("CALL_ACTIVE|$callerTitle|$lastCallerNumber")
+      } else {
+        PillionStateStore.sendMessage("CALL_IN|$callerTitle|$lastCallerNumber")
+      }
+      return
     }
+
+    if (sbn.isOngoing) return
 
     val isMedia = category == Notification.CATEGORY_TRANSPORT ||
       sbn.notification.extras.containsKey(Notification.EXTRA_MEDIA_SESSION)
@@ -274,17 +409,27 @@ class PillionNotificationListener : NotificationListenerService() {
     val title = PillionProtocol.sanitizeField(extras.getString("android.title") ?: "New Notification")
     val text = PillionProtocol.sanitizeField(extras.getCharSequence("android.text")?.toString() ?: "")
 
+    val replyPair = findReplyAction(sbn.notification)
+    trackedNotifications[key] = StoredNotificationEntry(
+      rawKey = sbn.key,
+      replyAction = replyPair?.first,
+      remoteInputs = replyPair?.second
+    )
+
     if (pkg != packageName) {
-      PillionStateStore.sendMessage("NOTIF_ADD|$key|$pkg|$title|$text")
+      val canReplyFlag = if (replyPair != null) "1" else "0"
+      PillionStateStore.sendMessage("NOTIF_ADD2|$key|$pkg|$canReplyFlag|$title|$text")
     }
   }
 
   override fun onNotificationRemoved(sbn: StatusBarNotification) {
     val key = PillionProtocol.escapeKey(sbn.key)
+    trackedNotifications.remove(key)
     PillionStateStore.sendMessage("NOTIF_REMOVE|$key")
     if (sbn.notification.category == Notification.CATEGORY_CALL) {
+      activeCallAnswerAction = null
+      activeCallDeclineAction = null
       PillionStateStore.sendMessage("CALL_END")
     }
   }
 }
-

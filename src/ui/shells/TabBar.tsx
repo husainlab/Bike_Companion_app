@@ -10,6 +10,7 @@ import { Text } from '@/ui/Text';
 
 const TAB_META: Record<string, { label: string; icon: PillionIconName }> = {
   index: { label: 'Cockpit', icon: 'smartphone' },
+  phone: { label: 'Phone', icon: 'phone' },
   alerts: { label: 'Alerts', icon: 'bell' },
   settings: { label: 'Setup', icon: 'settings' },
 };

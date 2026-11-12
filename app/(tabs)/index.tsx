@@ -1,16 +1,19 @@
 import React from 'react';
-import { View } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { setRelayMode } from '@/actions/cockpit';
 import {
   clampProgress,
+  filterContacts,
   formatBatteryLabel,
   isBatteryLow,
   resolveLinkBadge,
 } from '@/core/cockpit';
 import type { RelayMode } from '@/core/types';
 import {
+  dialContactNumber,
   disconnectCompanion,
+  launchLocalGoogleMaps,
   openNotificationAccessSettings,
   openOverlayPermissionSettings,
   sendCockpitCommand,
@@ -18,6 +21,7 @@ import {
   startSenderServer,
   stopCockpitOverlay,
   stopSenderServer,
+  syncCompanionContacts,
 } from '@/data/companion';
 import { requestAllPillionPermissions } from '@/lib/permissions';
 import { formatDurationMs } from '@/lib/time';
@@ -41,9 +45,13 @@ import { showToast } from '@/ui/Toast';
 
 export default function CockpitScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 700;
   const { settings } = useAppState();
   const companion = useCompanionState();
   const palette = getPalette(settings.theme);
+
+  const favoriteContacts = filterContacts(companion.contacts, '').slice(0, 4);
 
   const badge = resolveLinkBadge(
     companion.connectionStatus,
@@ -109,6 +117,19 @@ export default function CockpitScreen() {
     router.push('/connect');
   };
 
+  const handleLaunchMaps = async (splitScreen: boolean) => {
+    if (!companion.hasOverlayPermission) {
+      showToast('Grant Display Over Apps permission so the widget floats over Google Maps', 'info');
+      await openOverlayPermissionSettings();
+      return;
+    }
+    const launched = await launchLocalGoogleMaps(splitScreen);
+    await refreshCompanionSnapshot();
+    if (!launched) {
+      showToast('Google Maps is not installed on this handlebar phone', 'error');
+    }
+  };
+
   return (
     <PageShell
       title="Pillion"
@@ -169,11 +190,16 @@ export default function CockpitScreen() {
                   </View>
                 </View>
                 <Text className="font-bold text-2xl text-foreground" numberOfLines={1}>
-                  {companion.callerName || 'Unknown Caller'}
+                  {companion.callerName || companion.callerNumber || 'Unknown Caller'}
                 </Text>
+                {companion.callerNumber && companion.callerName !== companion.callerNumber ? (
+                  <Text className="font-mono text-sm text-foreground-muted" numberOfLines={1}>
+                    {companion.callerNumber}
+                  </Text>
+                ) : null}
                 <View className="flex-row gap-3">
                   <Button
-                    label="Decline"
+                    label={companion.isCallIncoming ? 'Decline' : 'End Call'}
                     icon="phoneOff"
                     tone="danger"
                     onPress={() => sendCockpitCommand('/call/decline')}
@@ -192,87 +218,161 @@ export default function CockpitScreen() {
               </Card>
             ) : null}
 
-            {/* Asymmetric sunlight-readable Media Deck */}
-            <Card className="gap-4">
-              <View className="flex-row items-start justify-between gap-3">
-                <View className="flex-1 gap-1">
-                  <Text className="font-mono text-xs uppercase tracking-widest text-foreground-muted">
-                    NOW PLAYING
-                  </Text>
-                  <Text className="font-bold text-2xl text-foreground" numberOfLines={2}>
-                    {companion.songTitle}
-                  </Text>
-                  <Text className="text-base text-foreground-muted" numberOfLines={1}>
-                    {companion.artistName}
-                  </Text>
+            <View className={isWide ? 'flex-row items-start gap-4' : 'gap-4'}>
+              {/* Asymmetric sunlight-readable Media Deck */}
+              <Card className={isWide ? 'flex-1 gap-4' : 'gap-4'}>
+                <View className="flex-row items-start justify-between gap-3">
+                  <View className="flex-1 gap-1">
+                    <Text className="font-mono text-xs uppercase tracking-widest text-foreground-muted">
+                      NOW PLAYING
+                    </Text>
+                    <Text className="font-bold text-2xl text-foreground" numberOfLines={2}>
+                      {companion.songTitle}
+                    </Text>
+                    <Text className="text-base text-foreground-muted" numberOfLines={1}>
+                      {companion.artistName}
+                    </Text>
+                  </View>
+                  {companion.durationMs > 0 ? (
+                    <Text className="font-mono-bold text-sm text-primary">
+                      {formatDurationMs(companion.progressMs)} /{' '}
+                      {formatDurationMs(companion.durationMs)}
+                    </Text>
+                  ) : null}
                 </View>
-                {companion.durationMs > 0 ? (
-                  <Text className="font-mono-bold text-sm text-primary">
-                    {formatDurationMs(companion.progressMs)} /{' '}
-                    {formatDurationMs(companion.durationMs)}
-                  </Text>
-                ) : null}
-              </View>
 
-              <View className="h-2 w-full overflow-hidden rounded-xs bg-surface-muted">
-                <View
-                  style={{ width: `${Math.round(progress * 100)}%` }}
-                  className="h-full bg-primary"
-                />
-              </View>
-
-              {/* Oversized glove-friendly asymmetric transport controls */}
-              <View className="flex-row gap-2.5">
-                <Press
-                  onPress={() => sendCockpitCommand('/media/prev')}
-                  accessibilityLabel="Previous track"
-                  className="w-16 min-h-hit items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted"
-                >
-                  <Icon name="skipBack" size={24} color={palette.foreground} />
-                </Press>
-                <Press
-                  onPress={() => sendCockpitCommand('/media/playpause')}
-                  haptic="confirm"
-                  accessibilityLabel={companion.isPlaying ? 'Pause' : 'Play'}
-                  className="flex-1 min-h-hit flex-row items-center justify-center gap-2 rounded-sm border-[1.5px] border-primary bg-primary"
-                >
-                  <Icon
-                    name={companion.isPlaying ? 'pause' : 'play'}
-                    size={24}
-                    color={palette.onPrimary}
+                <View className="h-2 w-full overflow-hidden rounded-xs bg-surface-muted">
+                  <View
+                    style={{ width: `${Math.round(progress * 100)}%` }}
+                    className="h-full bg-primary"
                   />
-                  <Text className="font-bold text-lg text-on-primary">
-                    {companion.isPlaying ? 'PAUSE' : 'PLAY'}
-                  </Text>
-                </Press>
-                <Press
-                  onPress={() => sendCockpitCommand('/media/next')}
-                  accessibilityLabel="Next track"
-                  className="w-16 min-h-hit items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted"
-                >
-                  <Icon name="skipForward" size={24} color={palette.foreground} />
-                </Press>
-              </View>
+                </View>
 
-              <View className="flex-row gap-2.5">
-                <Button
-                  label="Vol -"
-                  icon="volumeMute"
-                  tone="surface"
-                  compact
-                  onPress={() => sendCockpitCommand('/volume/down')}
-                  className="flex-1"
-                />
-                <Button
-                  label="Vol +"
-                  icon="volume"
-                  tone="surface"
-                  compact
-                  onPress={() => sendCockpitCommand('/volume/up')}
-                  className="flex-1"
-                />
+                {/* Oversized glove-friendly asymmetric transport controls */}
+                <View className="flex-row gap-2.5">
+                  <Press
+                    onPress={() => sendCockpitCommand('/media/prev')}
+                    accessibilityLabel="Previous track"
+                    className="w-16 min-h-hit items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted"
+                  >
+                    <Icon name="skipBack" size={24} color={palette.foreground} />
+                  </Press>
+                  <Press
+                    onPress={() => sendCockpitCommand('/media/playpause')}
+                    haptic="confirm"
+                    accessibilityLabel={companion.isPlaying ? 'Pause' : 'Play'}
+                    className="flex-1 min-h-hit flex-row items-center justify-center gap-2 rounded-sm border-[1.5px] border-primary bg-primary"
+                  >
+                    <Icon
+                      name={companion.isPlaying ? 'pause' : 'play'}
+                      size={24}
+                      color={palette.onPrimary}
+                    />
+                    <Text className="font-bold text-lg text-on-primary">
+                      {companion.isPlaying ? 'PAUSE' : 'PLAY'}
+                    </Text>
+                  </Press>
+                  <Press
+                    onPress={() => sendCockpitCommand('/media/next')}
+                    accessibilityLabel="Next track"
+                    className="w-16 min-h-hit items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted"
+                  >
+                    <Icon name="skipForward" size={24} color={palette.foreground} />
+                  </Press>
+                </View>
+
+                <View className="flex-row gap-2.5">
+                  <Button
+                    label="Vol -"
+                    icon="volumeMute"
+                    tone="surface"
+                    compact
+                    onPress={() => sendCockpitCommand('/volume/down')}
+                    className="flex-1"
+                  />
+                  <Button
+                    label="Vol +"
+                    icon="volume"
+                    tone="surface"
+                    compact
+                    onPress={() => sendCockpitCommand('/volume/up')}
+                    className="flex-1"
+                  />
+                </View>
+              </Card>
+
+              <View className={isWide ? 'flex-1 gap-4' : 'gap-4'}>
+                {/* Local Google Maps + Floating Widget Mode */}
+                <Card className="gap-3">
+                  <View className="flex-row items-center justify-between gap-2">
+                    <Text className="font-mono text-xs uppercase tracking-widest text-foreground-muted">
+                      LOCAL GOOGLE MAPS + WIDGET
+                    </Text>
+                    <Icon name="navigation" size={16} color={palette.primary} />
+                  </View>
+                  <Text className="text-sm text-foreground-muted">
+                    Runs Google Maps locally while Pillion floats media, call controls & quick-replies on top. All audio stays on your pocket phone.
+                  </Text>
+                  <View className="flex-row gap-2.5">
+                    <Button
+                      label="Maps + Widget"
+                      icon="navigation"
+                      tone="primary"
+                      compact
+                      onPress={() => handleLaunchMaps(false)}
+                      className="flex-1"
+                    />
+                    <Button
+                      label="Split-Screen"
+                      icon="columns"
+                      tone="surface"
+                      compact
+                      onPress={() => handleLaunchMaps(true)}
+                      className="flex-1"
+                    />
+                  </View>
+                </Card>
+
+                {/* Quick-Dial Starred Contacts */}
+                <Card className="gap-3">
+                  <View className="flex-row items-center justify-between">
+                    <Text className="font-mono text-xs uppercase tracking-widest text-foreground-muted">
+                      QUICK DIAL ({companion.contacts.length} SYNCED)
+                    </Text>
+                    <Press
+                      onPress={() => router.push('/(tabs)/phone')}
+                      className="px-2.5 py-1 rounded-xs border-[1.5px] border-border bg-surface-muted"
+                    >
+                      <Text className="font-mono-bold text-xs text-primary">OPEN PHONE</Text>
+                    </Press>
+                  </View>
+                  {favoriteContacts.length === 0 ? (
+                    <Text className="text-sm text-foreground-muted">
+                      Connect to Pocket Phone to sync contacts & recent calls over Bluetooth.
+                    </Text>
+                  ) : (
+                    <View className="flex-row flex-wrap gap-2">
+                      {favoriteContacts.map((contact) => (
+                        <Press
+                          key={contact.id}
+                          onPress={async () => {
+                            await dialContactNumber(contact.phoneNumber);
+                            showToast(`Dialing ${contact.name} on Pocket Phone`, 'success');
+                          }}
+                          haptic="confirm"
+                          className="min-w-[46%] flex-1 flex-row items-center gap-2 rounded-sm border-[1.5px] border-border bg-surface-muted px-3 py-2.5"
+                        >
+                          <Icon name="phoneCall" size={16} color={palette.accent} />
+                          <Text className="font-bold text-sm text-foreground flex-1" numberOfLines={1}>
+                            {contact.name}
+                          </Text>
+                        </Press>
+                      ))}
+                    </View>
+                  )}
+                </Card>
               </View>
-            </Card>
+            </View>
 
             {/* Bluetooth & Overlay Controls */}
             <Card className="gap-3">
@@ -399,6 +499,17 @@ export default function CockpitScreen() {
                 tone={companion.hasNotificationAccess ? 'surface' : 'primary'}
                 compact
                 onPress={() => openNotificationAccessSettings()}
+              />
+              <Button
+                label={`Sync Contacts & Recents (${companion.contacts.length})`}
+                icon="users"
+                tone="surface"
+                compact
+                onPress={async () => {
+                  await syncCompanionContacts();
+                  await refreshCompanionSnapshot();
+                  showToast('Synced contacts & recent calls to handlebar', 'success');
+                }}
               />
             </Card>
           </View>

@@ -32,7 +32,7 @@ module.exports = function withReleaseSigning(config) {
     }
 
     contents = contents.replace(
-      /(release\s*\{[\s\S]*?)signingConfig\s+signingConfigs\.debug/,
+      /(buildTypes\s*\{[\s\S]*?\n\s*release\s*\{[\s\S]*?)signingConfig\s+signingConfigs\.debug/,
       (match, prefix) =>
         `${prefix}signingConfig (signingConfigs.release.storeFile != null && signingConfigs.release.storeFile.exists() ? signingConfigs.release : signingConfigs.debug)`
     );

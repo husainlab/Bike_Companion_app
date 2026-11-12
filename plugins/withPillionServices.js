@@ -27,6 +27,18 @@ module.exports = function withPillionServices(config) {
       }
     }
 
+    // Allow Android 11+ package visibility for launching local Google Maps
+    manifest.queries = manifest.queries || [];
+    const mapsPackage = 'com.google.android.apps.maps';
+    const hasMapsQuery = manifest.queries.some((q) =>
+      (q.package || []).some((p) => p.$?.['android:name'] === mapsPackage)
+    );
+    if (!hasMapsQuery) {
+      manifest.queries.push({
+        package: [{ $: { 'android:name': mapsPackage } }],
+      });
+    }
+
     const app = manifest.application?.[0];
     if (!app) return mod;
     app.service = app.service || [];

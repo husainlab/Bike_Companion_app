@@ -3,7 +3,7 @@
     "name": "Pillion",
     "slug": "pillion",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "platforms": ["android"],
     "scheme": ["pillion"],
     "icon": "./assets/icon.png",
@@ -27,6 +27,7 @@
         "android.permission.READ_PHONE_STATE",
         "android.permission.READ_CALL_LOG",
         "android.permission.READ_CONTACTS",
+        "android.permission.CALL_PHONE",
         "android.permission.ANSWER_PHONE_CALLS",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.INTERNET",
@@ -44,7 +45,8 @@
         "expo-build-properties",
         {
           "android": {
-            "compileSdkVersion": 36,
+            "compileSdkVersion": 37,
+            "buildToolsVersion": "37.0.0",
             "targetSdkVersion": 36,
             "minSdkVersion": 26,
             "enableMinifyInReleaseBuilds": true,
