@@ -51,12 +51,57 @@ object PillionProtocol {
   const val ACTION_SYNC = "com.husainlab.pillion.ACTION_SYNC"
   const val ACTION_SYNC_CONTACTS = "com.husainlab.pillion.ACTION_SYNC_CONTACTS"
 
+  private val KEY_UNESCAPE_REGEX = Regex("%(25|7C|0A|0D)")
+  private val CALL_TIMER_REGEX = Regex("\\b\\d{1,2}:\\d{2}\\b")
+
   fun sanitizeField(raw: String): String =
     raw.replace("\n", " ").replace("\r", " ").replace("|", " ").trim()
 
-  fun escapeKey(raw: String): String = raw.replace("|", "^")
+  fun escapeKey(raw: String): String =
+    raw.replace("%", "%25")
+      .replace("|", "%7C")
+      .replace("\n", "%0A")
+      .replace("\r", "%0D")
 
-  fun unescapeKey(escaped: String): String = escaped.replace("^", "|")
+  fun unescapeKey(escaped: String): String =
+    KEY_UNESCAPE_REGEX.replace(escaped) { match ->
+      when (match.groupValues[1]) {
+        "25" -> "%"
+        "7C" -> "|"
+        "0A" -> "\n"
+        "0D" -> "\r"
+        else -> match.value
+      }
+    }
+
+  /**
+   * Classifies a CATEGORY_CALL notification into CALL_ACTIVE or CALL_IN without
+   * flipping an already active call back into ringing state on localized or timer updates.
+   */
+  fun classifyCallNotification(
+    textHint: String?,
+    currentCallActive: Boolean,
+    currentCallIncoming: Boolean
+  ): String {
+    val lower = textHint?.lowercase()?.trim().orEmpty()
+    val hasActivePhrase = lower.contains("ongoing") ||
+      lower.contains("active") ||
+      lower.contains("dialing") ||
+      lower.contains("calling") ||
+      lower.contains("in progress") ||
+      lower.contains("connected") ||
+      CALL_TIMER_REGEX.containsMatchIn(lower)
+    if (hasActivePhrase) {
+      return "CALL_ACTIVE"
+    }
+    if (currentCallActive && !currentCallIncoming) {
+      return "CALL_ACTIVE"
+    }
+    return "CALL_IN"
+  }
+
+  fun clampOverlayCoord(value: Int, maxAllowed: Int): Int =
+    value.coerceIn(0, maxAllowed.coerceAtLeast(0))
 
   fun parse(line: String, isSender: Boolean): PillionPacket? {
     val trimmed = line.trim()
@@ -288,6 +333,33 @@ object PillionStateStore {
     recentsList.clear()
     recentsList.addAll(recentsStaging)
     recentsStaging.clear()
+  }
+
+  @Synchronized
+  private fun clearTransientCollections() {
+    notificationsList.clear()
+    contactsStaging.clear()
+    recentsStaging.clear()
+    contactsList.clear()
+    recentsList.clear()
+  }
+
+  fun resetTransientState(notify: Boolean = false) {
+    songTitle = "No Media Playing"
+    artistName = "Unknown Artist"
+    isPlaying = false
+    progressMs = 0L
+    durationMs = 0L
+    batteryLevel = -1
+    isCallActive = false
+    isCallIncoming = false
+    callerName = ""
+    callerNumber = ""
+    lastNotification = null
+    clearTransientCollections()
+    if (notify) {
+      notifyChanged()
+    }
   }
 
   fun applyPacket(line: String, isSender: Boolean) {

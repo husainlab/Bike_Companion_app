@@ -6,10 +6,13 @@ import { getDataVersion } from '@/state/dataVersion';
 import {
   clearRideHistory,
   completeOnboarding,
+  endActiveRideSession,
+  incrementActiveRideNotifications,
   logRideSession,
   recordConnectedDevice,
   setRelayMode,
   setThemePreference,
+  startRideSession,
 } from './cockpit';
 
 describe('cockpit actions and queries with MemoryStore', () => {
@@ -41,6 +44,28 @@ describe('cockpit actions and queries with MemoryStore', () => {
 
     await clearRideHistory(store);
     expect(await loadRideHistory({ store, version: getDataVersion() })).toHaveLength(0);
+  });
+
+  it('manages ride session lifecycles and increments notification tallies', async () => {
+    const store = new MemoryStore();
+    const id1 = await startRideSession(store, 'receiver', 'Pixel Pocket', 1000);
+    expect(id1).toContain('ride-1000');
+
+    await incrementActiveRideNotifications(store, 3);
+    const activeRides = await store.listRideSessions(5);
+    expect(activeRides[0].notificationsRelayed).toBe(3);
+    expect(activeRides[0].endedAt).toBeNull();
+
+    // Starting a new session automatically closes any lingering unended ride
+    await startRideSession(store, 'receiver', 'Pixel Pocket 2', 5000);
+    const twoRides = await store.listRideSessions(5);
+    expect(twoRides).toHaveLength(2);
+    expect(twoRides[1].endedAt).toBe(5000);
+    expect(twoRides[0].endedAt).toBeNull();
+
+    await endActiveRideSession(store, 7000);
+    const ended = await store.listRideSessions(5);
+    expect(ended[0].endedAt).toBe(7000);
   });
 
   it('rejects invalid inputs with zod', async () => {

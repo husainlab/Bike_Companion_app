@@ -1,7 +1,10 @@
 import React from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
-import { setRelayMode } from '@/actions/cockpit';
+import {
+  endActiveRideSession,
+  setRelayMode,
+} from '@/actions/cockpit';
 import {
   clampProgress,
   filterContacts,
@@ -29,6 +32,7 @@ import { getStore, useAppState } from '@/state/app';
 import {
   initCompanionBridge,
   refreshCompanionSnapshot,
+  teardownPreviousRelayMode,
   useCompanionState,
 } from '@/state/companion';
 import { Button } from '@/ui/Button';
@@ -72,8 +76,12 @@ export default function CockpitScreen() {
   const lowBattery = isBatteryLow(companion.batteryLevel);
 
   const handleModeChange = async (mode: RelayMode) => {
+    if (mode === settings.relayMode) return;
+    const prev = settings.relayMode;
     await setRelayMode(getStore(), mode);
-    await initCompanionBridge(mode === 'receiver');
+    await teardownPreviousRelayMode(prev);
+    await initCompanionBridge(mode);
+    await refreshCompanionSnapshot();
   };
 
   const handleStartOverlay = async () => {
@@ -93,7 +101,7 @@ export default function CockpitScreen() {
   };
 
   const handleStartServer = async () => {
-    const granted = await requestAllPillionPermissions();
+    const granted = await requestAllPillionPermissions('sender');
     if (!granted) {
       showToast('Bluetooth and phone permissions are required to relay alerts', 'error');
       return;
@@ -109,7 +117,7 @@ export default function CockpitScreen() {
   };
 
   const handleConnectFlow = async () => {
-    const granted = await requestAllPillionPermissions();
+    const granted = await requestAllPillionPermissions('receiver');
     if (!granted) {
       showToast('Bluetooth permission is required to list paired phones', 'error');
       return;
@@ -118,7 +126,8 @@ export default function CockpitScreen() {
   };
 
   const handleLaunchMaps = async (splitScreen: boolean) => {
-    if (!companion.hasOverlayPermission) {
+    const snap = await refreshCompanionSnapshot();
+    if (!snap.hasOverlayPermission) {
       showToast('Grant Display Over Apps permission so the widget floats over Google Maps', 'info');
       await openOverlayPermissionSettings();
       return;
@@ -397,7 +406,10 @@ export default function CockpitScreen() {
                 </View>
                 {companion.connectionStatus === 'Connected' ? (
                   <Press
-                    onPress={() => disconnectCompanion()}
+                    onPress={async () => {
+                      await disconnectCompanion();
+                      await endActiveRideSession(getStore()).catch(() => {});
+                    }}
                     className="px-3 py-1.5 rounded-xs border-[1.5px] border-border"
                   >
                     <Text className="font-mono text-xs text-danger">DISCONNECT</Text>

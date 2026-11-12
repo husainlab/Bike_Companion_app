@@ -25,6 +25,10 @@ export async function stopSenderServer(): Promise<void> {
   await PillionNative?.stopServer();
 }
 
+export async function setCompanionRelayRole(mode: 'receiver' | 'sender'): Promise<void> {
+  await PillionNative?.setRelayRole(mode);
+}
+
 export async function connectToSenderDevice(address: string): Promise<void> {
   await PillionNative?.connectToDevice(address);
 }

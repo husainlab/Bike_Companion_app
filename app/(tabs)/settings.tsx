@@ -8,7 +8,7 @@ import {
 } from '@/actions/cockpit';
 import { openNotificationAccessSettings, openOverlayPermissionSettings } from '@/data/companion';
 import { getStore, useAppState } from '@/state/app';
-import { checkForAppUpdate, setUpdateCheck, useUpdate } from '@/state/update';
+import { checkForAppUpdate, getUpdate, setUpdateCheck, useUpdate } from '@/state/update';
 import { Button } from '@/ui/Button';
 import { Card } from '@/ui/Card';
 import { getPalette } from '@/ui/palette';
@@ -27,12 +27,13 @@ export default function SettingsScreen() {
 
   const handleManualUpdateCheck = async () => {
     const found = await checkForAppUpdate(true);
+    const latestState = getUpdate();
     if (found) {
       showToast(`Pillion v${found.version} is available`, 'success');
-    } else if (update.checkError) {
-      showToast(update.checkError, 'error');
+    } else if (latestState.checkError) {
+      showToast(latestState.checkError, 'error');
     } else {
-      showToast(`You are on the latest release (v${update.currentVersion})`, 'info');
+      showToast(`You are on the latest release (v${latestState.currentVersion})`, 'info');
     }
   };
 

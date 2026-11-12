@@ -1,8 +1,13 @@
 package com.husainlab.pillion.nativecore
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -12,6 +17,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
@@ -31,8 +37,31 @@ import kotlin.math.roundToInt
  * keeping all voice/music audio on the primary pocket phone.
  */
 class PillionOverlayService : Service() {
+  companion object {
+    private const val CHANNEL_ID = "pillion_overlay_channel"
+    private const val FOREGROUND_NOTIF_ID = 4109
+  }
+
   private enum class WidgetTab { MEDIA, CALLS, ALERTS }
   private enum class CallsSubTab { FAV, RECENTS, ALL, KEYPAD }
+
+  private data class RenderSignature(
+    val isExpanded: Boolean,
+    val popupKey: String?,
+    val activeTab: WidgetTab,
+    val callsSubTab: CallsSubTab,
+    val isCallActive: Boolean,
+    val isCallIncoming: Boolean,
+    val callerName: String,
+    val callerNumber: String,
+    val keypadText: String,
+    val hasDuration: Boolean,
+    val contactsCount: Int,
+    val contactsStamp: Int,
+    val recentsStamp: Int,
+    val alertsStamp: Int,
+    val showCollapsedTitle: Boolean
+  )
 
   private lateinit var windowManager: WindowManager
   private lateinit var params: WindowManager.LayoutParams
@@ -45,6 +74,18 @@ class PillionOverlayService : Service() {
   private var keypadDigits = StringBuilder()
   private var popupNotification: MirrorNotification? = null
   private var lastSeenNotifKey: String? = null
+  private var prevCallActive = false
+  private var prevCallIncoming = false
+  private var lastSignature: RenderSignature? = null
+
+  private var headerLiveBadge: TextView? = null
+  private var headerBatteryView: TextView? = null
+  private var collapsedStatusView: TextView? = null
+  private var collapsedTitleView: TextView? = null
+  private var mediaTitleView: TextView? = null
+  private var mediaArtistView: TextView? = null
+  private var mediaProgressView: ProgressBar? = null
+  private var mediaPlayPauseButton: TextView? = null
 
   private val hidePopupRunnable = Runnable {
     popupNotification = null
@@ -54,15 +95,21 @@ class PillionOverlayService : Service() {
   private val stateListener: () -> Unit = {
     mainHandler.post {
       val latest = PillionStateStore.lastNotification
-      if (latest != null && latest.key != lastSeenNotifKey && !isExpanded) {
+      if (latest != null && latest.key != lastSeenNotifKey) {
         lastSeenNotifKey = latest.key
-        popupNotification = latest
-        mainHandler.removeCallbacks(hidePopupRunnable)
-        mainHandler.postDelayed(hidePopupRunnable, 5000L)
+        if (!isExpanded) {
+          popupNotification = latest
+          mainHandler.removeCallbacks(hidePopupRunnable)
+          mainHandler.postDelayed(hidePopupRunnable, 5000L)
+        }
       }
-      if (PillionStateStore.isCallActive || PillionStateStore.isCallIncoming) {
+      val nowCall = PillionStateStore.isCallActive
+      val nowIncoming = PillionStateStore.isCallIncoming
+      if ((nowCall && !prevCallActive) || (nowIncoming && !prevCallIncoming)) {
         isExpanded = true
       }
+      prevCallActive = nowCall
+      prevCallIncoming = nowIncoming
       render()
     }
   }
@@ -83,14 +130,83 @@ class PillionOverlayService : Service() {
 
   override fun onCreate() {
     super.onCreate()
+    startOverlayForeground()
+    if (!Settings.canDrawOverlays(this)) {
+      PillionStateStore.isOverlayRunning = false
+      PillionStateStore.notifyChanged()
+      stopSelf()
+      return
+    }
     windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-    PillionStateStore.isOverlayRunning = true
-    PillionStateStore.addListener(stateListener)
-    PillionStateStore.notifyChanged()
-    createOverlayWindow()
+    lastSeenNotifKey = PillionStateStore.lastNotification?.key
+    prevCallActive = PillionStateStore.isCallActive
+    prevCallIncoming = PillionStateStore.isCallIncoming
+    if (createOverlayWindow()) {
+      PillionStateStore.isOverlayRunning = true
+      PillionStateStore.addListener(stateListener)
+      PillionStateStore.notifyChanged()
+    }
   }
 
-  private fun createOverlayWindow() {
+  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    startOverlayForeground()
+    if (!Settings.canDrawOverlays(this)) {
+      PillionStateStore.isOverlayRunning = false
+      PillionStateStore.notifyChanged()
+      stopSelf()
+      return START_NOT_STICKY
+    }
+    return START_NOT_STICKY
+  }
+
+  private fun startOverlayForeground() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      val existing = nm.getNotificationChannel(CHANNEL_ID)
+      if (existing == null) {
+        nm.createNotificationChannel(
+          NotificationChannel(CHANNEL_ID, "Pillion Cockpit Overlay", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Keeps floating handlebar controls alive over Google Maps"
+            setShowBadge(false)
+          }
+        )
+      }
+    }
+
+    val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+    val contentIntent = launchIntent?.let {
+      val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+      } else {
+        PendingIntent.FLAG_UPDATE_CURRENT
+      }
+      PendingIntent.getActivity(this, 0, it, flags)
+    }
+
+    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      Notification.Builder(this, CHANNEL_ID)
+    } else {
+      @Suppress("DEPRECATION")
+      Notification.Builder(this)
+    }
+    val notification = builder
+      .setContentTitle("Pillion Handlebar Widget")
+      .setContentText("Floating media, call & alert controls active")
+      .setSmallIcon(applicationInfo.icon)
+      .setOngoing(true)
+      .setContentIntent(contentIntent)
+      .build()
+
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        startForeground(FOREGROUND_NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+      } else {
+        startForeground(FOREGROUND_NOTIF_ID, notification)
+      }
+    } catch (_: Exception) {}
+  }
+
+  private fun createOverlayWindow(): Boolean {
     val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
     } else {
@@ -115,9 +231,18 @@ class PillionOverlayService : Service() {
       background = roundedBox(Color.BLACK, Color.parseColor("#242824"), 2, 12)
     }
 
-    rootContainer = container
-    windowManager.addView(container, params)
-    render()
+    return try {
+      windowManager.addView(container, params)
+      rootContainer = container
+      render()
+      true
+    } catch (_: Exception) {
+      rootContainer = null
+      PillionStateStore.isOverlayRunning = false
+      PillionStateStore.notifyChanged()
+      stopSelf()
+      false
+    }
   }
 
   private fun attachDragOrClick(view: View, onClick: (() -> Unit)? = null) {
@@ -144,9 +269,16 @@ class PillionOverlayService : Service() {
           if (abs(dx) > slop || abs(dy) > slop) {
             moved = true
           }
-          params.x = startX + dx
-          params.y = startY + dy
-          rootContainer?.let { windowManager.updateViewLayout(it, params) }
+          val metrics = resources.displayMetrics
+          val viewWidth = (rootContainer?.width ?: dp(80)).coerceAtLeast(dp(48))
+          val viewHeight = (rootContainer?.height ?: dp(48)).coerceAtLeast(dp(36))
+          params.x = PillionProtocol.clampOverlayCoord(startX + dx, metrics.widthPixels - viewWidth)
+          params.y = PillionProtocol.clampOverlayCoord(startY + dy, metrics.heightPixels - viewHeight)
+          rootContainer?.let {
+            try {
+              windowManager.updateViewLayout(it, params)
+            } catch (_: Exception) {}
+          }
           true
         }
         MotionEvent.ACTION_UP -> {
@@ -197,8 +329,97 @@ class PillionOverlayService : Service() {
     PillionStateStore.sendMessage("/call/dial|$clean")
   }
 
+  private fun buildRenderSignature(): RenderSignature {
+    val contacts = PillionStateStore.getContacts()
+    val recents = PillionStateStore.getRecentCalls()
+    val alerts = PillionStateStore.getNotifications()
+    val showCollapsedTitle = PillionStateStore.songTitle != "No Media Playing" && !PillionStateStore.isCallActive
+    return RenderSignature(
+      isExpanded = isExpanded,
+      popupKey = if (!isExpanded) popupNotification?.key else null,
+      activeTab = activeTab,
+      callsSubTab = callsSubTab,
+      isCallActive = PillionStateStore.isCallActive,
+      isCallIncoming = PillionStateStore.isCallIncoming,
+      callerName = PillionStateStore.callerName,
+      callerNumber = PillionStateStore.callerNumber,
+      keypadText = keypadDigits.toString(),
+      hasDuration = PillionStateStore.durationMs > 0L,
+      contactsCount = contacts.size,
+      contactsStamp = contacts.hashCode(),
+      recentsStamp = recents.hashCode(),
+      alertsStamp = alerts.hashCode(),
+      showCollapsedTitle = showCollapsedTitle
+    )
+  }
+
+  private fun clearViewRefs() {
+    headerLiveBadge = null
+    headerBatteryView = null
+    collapsedStatusView = null
+    collapsedTitleView = null
+    mediaTitleView = null
+    mediaArtistView = null
+    mediaProgressView = null
+    mediaPlayPauseButton = null
+  }
+
+  private fun patchDynamicViews() {
+    val orange = Color.parseColor("#FF5A1F")
+    val emerald = Color.parseColor("#00E096")
+    val crimson = Color.parseColor("#FF453A")
+    val cardBg = Color.parseColor("#0B0B0C")
+    val border = Color.parseColor("#242824")
+    val muted = Color.parseColor("#B5BAB3")
+    val connected = PillionStateStore.connectionStatus == "Connected"
+    val level = PillionStateStore.batteryLevel
+
+    collapsedStatusView?.let { tv ->
+      tv.text = when {
+        PillionStateStore.isCallActive -> "CALL"
+        level >= 0 -> "$level%"
+        connected -> "LIVE"
+        else -> "OFF"
+      }
+      tv.setTextColor(
+        when {
+          PillionStateStore.isCallActive -> crimson
+          level in 0..20 -> crimson
+          connected -> emerald
+          else -> muted
+        }
+      )
+    }
+    collapsedTitleView?.text = "  ${PillionStateStore.songTitle}"
+
+    headerLiveBadge?.let { tv ->
+      tv.text = if (connected) "LIVE" else "OFF"
+      tv.setTextColor(if (connected) emerald else muted)
+      tv.background = roundedBox(cardBg, if (connected) emerald else border, 1, 5)
+    }
+    headerBatteryView?.let { tv ->
+      tv.text = if (level >= 0) "  $level%" else "  --%"
+      tv.setTextColor(if (level in 0..20) crimson else Color.WHITE)
+    }
+    mediaTitleView?.text = PillionStateStore.songTitle
+    mediaArtistView?.text = PillionStateStore.artistName
+    if (PillionStateStore.durationMs > 0L) {
+      mediaProgressView?.progress = ((PillionStateStore.progressMs.toDouble() / PillionStateStore.durationMs.toDouble()) * 1000.0)
+        .roundToInt()
+        .coerceIn(0, 1000)
+    }
+    mediaPlayPauseButton?.text = if (PillionStateStore.isPlaying) "PAUSE" else "PLAY"
+  }
+
   private fun render() {
     val root = rootContainer ?: return
+    val signature = buildRenderSignature()
+    if (signature == lastSignature && root.childCount > 0) {
+      patchDynamicViews()
+      return
+    }
+    lastSignature = signature
+    clearViewRefs()
     root.removeAllViews()
 
     val orange = Color.parseColor("#FF5A1F")
@@ -270,7 +491,7 @@ class PillionOverlayService : Service() {
         connected -> "LIVE"
         else -> "OFF"
       }
-      pillRow.addView(TextView(this).apply {
+      val statusView = TextView(this).apply {
         text = statusLabel
         setTextColor(
           when {
@@ -282,16 +503,20 @@ class PillionOverlayService : Service() {
         )
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         typeface = Typeface.MONOSPACE
-      })
+      }
+      collapsedStatusView = statusView
+      pillRow.addView(statusView)
       if (PillionStateStore.songTitle != "No Media Playing" && !PillionStateStore.isCallActive) {
-        pillRow.addView(TextView(this).apply {
+        val titleView = TextView(this).apply {
           text = "  ${PillionStateStore.songTitle}"
           setTextColor(Color.WHITE)
           setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
           maxLines = 1
           ellipsize = TextUtils.TruncateAt.END
           maxWidth = dp(130)
-        })
+        }
+        collapsedTitleView = titleView
+        pillRow.addView(titleView)
       }
       attachDragOrClick(pillRow) {
         isExpanded = true
@@ -317,23 +542,27 @@ class PillionOverlayService : Service() {
     attachDragOrClick(header)
 
     val connected = PillionStateStore.connectionStatus == "Connected"
-    header.addView(TextView(this).apply {
+    val liveBadge = TextView(this).apply {
       text = if (connected) "LIVE" else "OFF"
       setTextColor(if (connected) emerald else muted)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
       typeface = Typeface.MONOSPACE
       setPadding(dp(8), dp(4), dp(8), dp(4))
       background = roundedBox(cardBg, if (connected) emerald else border, 1, 5)
-    })
+    }
+    headerLiveBadge = liveBadge
+    header.addView(liveBadge)
 
     val level = PillionStateStore.batteryLevel
-    header.addView(TextView(this).apply {
+    val batView = TextView(this).apply {
       text = if (level >= 0) "  $level%" else "  --%"
       setTextColor(if (level in 0..20) crimson else Color.WHITE)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
       typeface = Typeface.MONOSPACE
       layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-    })
+    }
+    headerBatteryView = batView
+    header.addView(batView)
 
     header.addView(makeButton("MAPS", cardBg, orange, orange, textSp = 11f, padH = 9, padV = 5) {
       openLocalMaps()
@@ -422,21 +651,25 @@ class PillionOverlayService : Service() {
           setPadding(dp(12), dp(10), dp(12), dp(10))
           background = roundedBox(cardBg, border, 1, 9)
         }
-        mediaCard.addView(TextView(this).apply {
+        val titleTv = TextView(this).apply {
           text = PillionStateStore.songTitle
           setTextColor(Color.WHITE)
           setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
           typeface = Typeface.DEFAULT_BOLD
           maxLines = 1
           ellipsize = TextUtils.TruncateAt.END
-        })
-        mediaCard.addView(TextView(this).apply {
+        }
+        mediaTitleView = titleTv
+        mediaCard.addView(titleTv)
+        val artistTv = TextView(this).apply {
           text = PillionStateStore.artistName
           setTextColor(muted)
           setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
           maxLines = 1
           ellipsize = TextUtils.TruncateAt.END
-        })
+        }
+        mediaArtistView = artistTv
+        mediaCard.addView(artistTv)
         if (PillionStateStore.durationMs > 0L) {
           val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 1000
@@ -447,6 +680,7 @@ class PillionOverlayService : Service() {
             lp.topMargin = dp(8)
             layoutParams = lp
           }
+          mediaProgressView = bar
           mediaCard.addView(bar)
         }
         panel.addView(mediaCard)
@@ -462,7 +696,7 @@ class PillionOverlayService : Service() {
         }.apply {
           layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        controls.addView(makeButton(
+        val playBtn = makeButton(
           if (PillionStateStore.isPlaying) "PAUSE" else "PLAY",
           orange,
           Color.BLACK,
@@ -474,7 +708,9 @@ class PillionOverlayService : Service() {
           lp.marginStart = dp(6)
           lp.marginEnd = dp(6)
           layoutParams = lp
-        })
+        }
+        mediaPlayPauseButton = playBtn
+        controls.addView(playBtn)
         controls.addView(makeButton("NEXT", cardBg, Color.WHITE, border) {
           PillionStateStore.sendMessage("/media/next")
         }.apply {

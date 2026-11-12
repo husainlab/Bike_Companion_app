@@ -51,3 +51,7 @@ export async function bootApp(): Promise<AppState> {
 
   return bootPromise;
 }
+
+export function resetAppStateForTests(): void {
+  bootPromise = null;
+}

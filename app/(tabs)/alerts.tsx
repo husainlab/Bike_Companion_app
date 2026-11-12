@@ -133,7 +133,8 @@ export default function AlertsScreen() {
                 <View className="gap-0.5">
                   <Text className="font-bold text-base text-foreground">{ride.deviceName}</Text>
                   <Text className="font-mono text-xs text-foreground-muted">
-                    {ride.mode.toUpperCase()} • {formatRelativeTime(ride.startedAt)}
+                    {ride.mode.toUpperCase()} • {ride.endedAt ? 'DONE' : 'LIVE'} •{' '}
+                    {formatRelativeTime(ride.startedAt)}
                   </Text>
                 </View>
                 <Text className="font-mono-bold text-sm text-primary">

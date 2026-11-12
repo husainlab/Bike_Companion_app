@@ -58,4 +58,85 @@ class PillionProtocolTest {
     assertEquals(3, recent.recent.callType)
     assertEquals(1700000000000L, recent.recent.timestampMs)
   }
+
+  @Test
+  fun roundTripsEscapedKeysWithSpecialCharacters() {
+    val raw = "0|com.whatsapp|1|null|1000|tag^with%and|pipe"
+    val escaped = PillionProtocol.escapeKey(raw)
+    assertFalse(escaped.contains("|"))
+    assertFalse(escaped.contains("\n"))
+    assertEquals(raw, PillionProtocol.unescapeKey(escaped))
+  }
+
+  @Test
+  fun classifiesCallNotificationCategoriesWithoutStaleFlips() {
+    assertEquals(
+      "CALL_ACTIVE",
+      PillionProtocol.classifyCallNotification("Ongoing call • 01:23", currentCallActive = false, currentCallIncoming = false)
+    )
+    assertEquals(
+      "CALL_ACTIVE",
+      PillionProtocol.classifyCallNotification("00:42", currentCallActive = false, currentCallIncoming = false)
+    )
+    assertEquals(
+      "CALL_ACTIVE",
+      PillionProtocol.classifyCallNotification("Call with Alex", currentCallActive = true, currentCallIncoming = false)
+    )
+    assertEquals(
+      "CALL_IN",
+      PillionProtocol.classifyCallNotification("Incoming call", currentCallActive = true, currentCallIncoming = true)
+    )
+    assertEquals(
+      "CALL_IN",
+      PillionProtocol.classifyCallNotification(null, currentCallActive = false, currentCallIncoming = false)
+    )
+  }
+
+  @Test
+  fun clampsOverlayCoordinatesCleanly() {
+    assertEquals(0, PillionProtocol.clampOverlayCoord(-20, 1000))
+    assertEquals(500, PillionProtocol.clampOverlayCoord(500, 1000))
+    assertEquals(1000, PillionProtocol.clampOverlayCoord(1400, 1000))
+    assertEquals(0, PillionProtocol.clampOverlayCoord(50, -10))
+  }
+
+  @Test
+  fun resetTransientStateClearsCallMediaAndNotifications() {
+    PillionStateStore.applyPacket("TITLE|Track A", false)
+    PillionStateStore.applyPacket("ARTIST|Artist A", false)
+    PillionStateStore.applyPacket("PLAYING|1", false)
+    PillionStateStore.applyPacket("BATTERY|65", false)
+    PillionStateStore.applyPacket("CALL_IN|Maya|+15550000", false)
+    PillionStateStore.applyPacket("NOTIF_ADD2|k1|com.msg|1|Sam|Hey", false)
+
+    assertTrue(PillionStateStore.isCallActive)
+    assertTrue(PillionStateStore.isCallIncoming)
+    assertEquals(1, PillionStateStore.getNotifications().size)
+
+    PillionStateStore.resetTransientState()
+
+    assertFalse(PillionStateStore.isCallActive)
+    assertFalse(PillionStateStore.isCallIncoming)
+    assertFalse(PillionStateStore.isPlaying)
+    assertEquals(-1, PillionStateStore.batteryLevel)
+    assertEquals("No Media Playing", PillionStateStore.songTitle)
+    assertTrue(PillionStateStore.getNotifications().isEmpty())
+    assertNull(PillionStateStore.lastNotification)
+  }
+
+  @Test
+  fun commitsContactsBatchAtomicallyAndCapsNotificationsAt40() {
+    PillionStateStore.resetTransientState()
+    PillionStateStore.applyPacket("CONTACTS_BEGIN", false)
+    PillionStateStore.applyPacket("CONTACT|1|Alice|+15550001|1", false)
+    PillionStateStore.applyPacket("CONTACT|2|Bob|+15550002|0", false)
+    PillionStateStore.applyPacket("CONTACTS_END", false)
+    assertEquals(2, PillionStateStore.getContacts().size)
+
+    for (i in 1..45) {
+      PillionStateStore.applyPacket("NOTIF_ADD2|k$i|com.app|0|Title $i|Body $i", false)
+    }
+    assertEquals(40, PillionStateStore.getNotifications().size)
+    PillionStateStore.resetTransientState()
+  }
 }

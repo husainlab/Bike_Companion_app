@@ -25,4 +25,10 @@ module.exports = defineConfig([
       'modules/*/android/build/*',
     ],
   },
+  {
+    files: ['src/**/*.test.ts'],
+    rules: {
+      'import/first': 'off',
+    },
+  },
 ]);

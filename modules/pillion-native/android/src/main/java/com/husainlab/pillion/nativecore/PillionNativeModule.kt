@@ -34,6 +34,9 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class PillionNativeModule : Module() {
   companion object {
@@ -45,10 +48,11 @@ class PillionNativeModule : Module() {
   }
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-  private var connectedThread: ConnectedThread? = null
+  @Volatile private var connectedThread: ConnectedThread? = null
   private var reconnectJob: Job? = null
   @Volatile private var autoReconnectEnabled = false
   @Volatile private var isSenderMode = false
+  private val isConnecting = AtomicBoolean(false)
   @Volatile private var serverAcceptJob: Job? = null
   @Volatile private var activeServerSocket: BluetoothServerSocket? = null
 
@@ -114,6 +118,8 @@ class PillionNativeModule : Module() {
     AsyncFunction("startServer") {
       isSenderMode = true
       autoReconnectEnabled = false
+      reconnectJob?.cancel()
+      reconnectJob = null
       startServerInternal()
     }
 
@@ -121,29 +127,55 @@ class PillionNativeModule : Module() {
       stopServerInternal()
     }
 
+    AsyncFunction("setRelayRole") { mode: String ->
+      val nextSender = mode == "sender"
+      val roleChanged = isSenderMode != nextSender
+      isSenderMode = nextSender
+      if (nextSender) {
+        autoReconnectEnabled = false
+        reconnectJob?.cancel()
+        reconnectJob = null
+        if (roleChanged) {
+          closeCurrentConnection("Disconnected")
+          context.stopService(Intent(context, PillionOverlayService::class.java))
+        }
+      } else {
+        if (PillionStateStore.isServerRunning) {
+          stopServerInternal()
+        } else if (roleChanged) {
+          closeCurrentConnection("Disconnected")
+        }
+      }
+      PillionStateStore.notifyChanged()
+    }
+
     AsyncFunction("connectToDevice") { address: String ->
       isSenderMode = false
+      if (PillionStateStore.isServerRunning) {
+        stopServerInternal()
+      }
       autoReconnectEnabled = true
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .edit()
         .putString(PREF_LAST_DEVICE, address)
         .apply()
-      startReconnectLoop()
+      closeCurrentConnection("Connecting...")
+      startReconnectLoop(initialDelayMs = 5000L)
       connectByAddress(address)
     }
 
     AsyncFunction("disconnect") {
       autoReconnectEnabled = false
-      connectedThread?.cancel()
-      connectedThread = null
-      updateStatus("Disconnected")
+      closeCurrentConnection("Disconnected")
     }
 
     AsyncFunction("setAutoReconnect") { enabled: Boolean ->
       autoReconnectEnabled = enabled
-      if (enabled) {
-        isSenderMode = false
-        startReconnectLoop()
+      if (enabled && !isSenderMode) {
+        startReconnectLoop(initialDelayMs = 0L)
+      } else if (!enabled) {
+        reconnectJob?.cancel()
+        reconnectJob = null
       }
     }
 
@@ -151,7 +183,7 @@ class PillionNativeModule : Module() {
       if (!Settings.canDrawOverlays(context)) {
         return@AsyncFunction false
       }
-      context.startService(Intent(context, PillionOverlayService::class.java))
+      startOverlayForegroundService()
       true
     }
 
@@ -176,10 +208,19 @@ class PillionNativeModule : Module() {
     }
   }
 
+  private fun startOverlayForegroundService() {
+    val intent = Intent(context, PillionOverlayService::class.java)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      context.startForegroundService(intent)
+    } else {
+      context.startService(intent)
+    }
+  }
+
   private fun launchGoogleMapsInternal(splitScreen: Boolean): Boolean {
     if (Settings.canDrawOverlays(context) && !PillionStateStore.isOverlayRunning) {
       try {
-        context.startService(Intent(context, PillionOverlayService::class.java))
+        startOverlayForegroundService()
       } catch (_: Exception) {}
     }
 
@@ -201,19 +242,22 @@ class PillionNativeModule : Module() {
   }
 
   private fun hasRequiredPermissions(): Boolean {
-    val permissions = mutableListOf(
-      Manifest.permission.READ_PHONE_STATE,
-      Manifest.permission.READ_CALL_LOG,
-      Manifest.permission.READ_CONTACTS,
-      Manifest.permission.CALL_PHONE
-    )
+    val permissions = mutableListOf<String>()
+    if (isSenderMode) {
+      permissions.add(Manifest.permission.READ_PHONE_STATE)
+      permissions.add(Manifest.permission.READ_CALL_LOG)
+      permissions.add(Manifest.permission.READ_CONTACTS)
+      permissions.add(Manifest.permission.CALL_PHONE)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        permissions.add(Manifest.permission.ANSWER_PHONE_CALLS)
+      }
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+      }
+    }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
       permissions.add(Manifest.permission.BLUETOOTH_SCAN)
-      permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
-    }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      permissions.add(Manifest.permission.ANSWER_PHONE_CALLS)
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       permissions.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -247,8 +291,21 @@ class PillionNativeModule : Module() {
     }
   }
 
+  private fun closeCurrentConnection(nextStatus: String) {
+    val previous = connectedThread
+    connectedThread = null
+    previous?.cancel()
+    PillionStateStore.resetTransientState()
+    updateStatus(nextStatus)
+  }
+
   private fun startServerInternal() {
     if (PillionStateStore.isServerRunning) return
+    val adapter = bluetoothAdapter
+    if (adapter == null) {
+      updateStatus("Bluetooth unavailable")
+      return
+    }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
       ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
     ) {
@@ -261,19 +318,32 @@ class PillionNativeModule : Module() {
 
     serverAcceptJob = scope.launch {
       try {
-        activeServerSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord("Pillion", APP_UUID)
         while (PillionStateStore.isServerRunning && isActive) {
+          val serverSocket = activeServerSocket ?: try {
+            bluetoothAdapter?.listenUsingRfcommWithServiceRecord("Pillion", APP_UUID)?.also {
+              activeServerSocket = it
+            }
+          } catch (_: Exception) {
+            null
+          }
+
+          if (serverSocket == null) {
+            updateStatus("Server Error")
+            delay(2000)
+            continue
+          }
+
           updateStatus("Waiting for connection...")
           val socket = try {
-            activeServerSocket?.accept()
+            serverSocket.accept()
           } catch (_: IOException) {
             if (PillionStateStore.isServerRunning) {
               updateStatus("Server Error")
-              delay(2000)
               try {
                 activeServerSocket?.close()
               } catch (_: Exception) {}
-              activeServerSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord("Pillion", APP_UUID)
+              activeServerSocket = null
+              delay(2000)
               continue
             } else {
               break
@@ -281,12 +351,13 @@ class PillionNativeModule : Module() {
           }
           socket?.let { accepted ->
             manageConnectedSocket(accepted)
-            while (connectedThread?.isAlive == true && PillionStateStore.isServerRunning) {
+            while (connectedThread?.isAlive == true && PillionStateStore.isServerRunning && isActive) {
               delay(1000)
             }
           }
         }
       } catch (_: Exception) {
+        PillionStateStore.resetTransientState()
         updateStatus("Server failed")
         PillionStateStore.isServerRunning = false
         PillionStateStore.notifyChanged()
@@ -307,56 +378,57 @@ class PillionNativeModule : Module() {
     activeServerSocket = null
     serverAcceptJob?.cancel()
     serverAcceptJob = null
-    connectedThread?.cancel()
-    connectedThread = null
-    updateStatus("Server Stopped")
+    closeCurrentConnection("Server Stopped")
   }
 
-  private fun connectByAddress(address: String) {
-    val adapter = bluetoothAdapter ?: return
-    scope.launch {
-      try {
-        if (PillionStateStore.connectionStatus == "Connected") return@launch
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-          ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-        ) {
-          updateStatus("Permission denied")
-          return@launch
-        }
-        updateStatus("Connecting...")
-        val device: BluetoothDevice = adapter.getRemoteDevice(address)
-        val socket = device.createRfcommSocketToServiceRecord(APP_UUID)
-        socket.connect()
-        manageConnectedSocket(socket)
-      } catch (_: IOException) {
-        updateStatus("Disconnected")
-      } catch (_: SecurityException) {
+  private fun attemptConnectSocket(address: String, connectingStatus: String) {
+    val adapter = bluetoothAdapter ?: run {
+      updateStatus("Bluetooth unavailable")
+      return
+    }
+    if (!isConnecting.compareAndSet(false, true)) return
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+        ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+      ) {
         updateStatus("Permission denied")
+        return
       }
+      updateStatus(connectingStatus)
+      val device: BluetoothDevice = adapter.getRemoteDevice(address)
+      val socket = device.createRfcommSocketToServiceRecord(APP_UUID)
+      socket.connect()
+      manageConnectedSocket(socket)
+    } catch (_: IOException) {
+      updateStatus("Disconnected")
+    } catch (_: SecurityException) {
+      updateStatus("Permission denied")
+    } catch (_: IllegalArgumentException) {
+      updateStatus("Disconnected")
+    } finally {
+      isConnecting.set(false)
     }
   }
 
-  private fun startReconnectLoop() {
+  private fun connectByAddress(address: String) {
+    scope.launch {
+      if (PillionStateStore.connectionStatus == "Connected") return@launch
+      attemptConnectSocket(address, "Connecting...")
+    }
+  }
+
+  private fun startReconnectLoop(initialDelayMs: Long = 0L) {
     if (reconnectJob?.isActive == true) return
     reconnectJob = scope.launch {
+      if (initialDelayMs > 0L) {
+        delay(initialDelayMs)
+      }
       while (isActive) {
-        if (autoReconnectEnabled && !isSenderMode && PillionStateStore.connectionStatus != "Connected") {
+        if (autoReconnectEnabled && !isSenderMode && connectedThread == null && !isConnecting.get()) {
           val address = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(PREF_LAST_DEVICE, null)
           if (address != null && bluetoothAdapter != null) {
-            try {
-              if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-                ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-              ) {
-                val device = bluetoothAdapter!!.getRemoteDevice(address)
-                updateStatus("Auto-reconnecting...")
-                val socket = device.createRfcommSocketToServiceRecord(APP_UUID)
-                socket.connect()
-                manageConnectedSocket(socket)
-              }
-            } catch (_: Exception) {
-              updateStatus("Disconnected")
-            }
+            attemptConnectSocket(address, "Auto-reconnecting...")
           }
         }
         delay(5000)
@@ -365,9 +437,12 @@ class PillionNativeModule : Module() {
   }
 
   private fun manageConnectedSocket(socket: BluetoothSocket) {
+    val previous = connectedThread
+    val nextThread = ConnectedThread(socket)
+    connectedThread = nextThread
+    previous?.cancel()
+    nextThread.start()
     updateStatus("Connected")
-    connectedThread?.cancel()
-    connectedThread = ConnectedThread(socket).also { it.start() }
     context.sendBroadcast(Intent(PillionProtocol.ACTION_SYNC))
     if (isSenderMode) {
       scope.launch {
@@ -662,32 +737,56 @@ class PillionNativeModule : Module() {
   private inner class ConnectedThread(private val socket: BluetoothSocket) : Thread() {
     private val mmInStream: InputStream = socket.inputStream
     private val mmOutStream: OutputStream = socket.outputStream
+    private val writeQueue = LinkedBlockingQueue<ByteArray>(512)
+    private val closed = AtomicBoolean(false)
+    private val writerThread = Thread {
+      while (!closed.get()) {
+        try {
+          val frame = writeQueue.poll(500, TimeUnit.MILLISECONDS) ?: continue
+          mmOutStream.write(frame)
+          mmOutStream.write('\n'.code)
+          mmOutStream.flush()
+        } catch (_: InterruptedException) {
+          break
+        } catch (_: IOException) {
+          break
+        }
+      }
+    }.apply {
+      name = "PillionSppWriter"
+      isDaemon = true
+    }
 
     override fun run() {
+      writerThread.start()
       val reader = mmInStream.bufferedReader()
-      while (true) {
+      while (!closed.get()) {
         try {
           val line = reader.readLine() ?: break
           if (line.isNotEmpty()) {
             PillionStateStore.applyPacket(line, isSenderMode)
           }
         } catch (_: IOException) {
-          updateStatus("Disconnected")
           break
         }
       }
-      updateStatus("Disconnected")
+      closed.set(true)
+      writerThread.interrupt()
+      if (connectedThread === this) {
+        connectedThread = null
+        PillionStateStore.resetTransientState()
+        updateStatus("Disconnected")
+      }
     }
 
     fun write(bytes: ByteArray) {
-      try {
-        mmOutStream.write(bytes)
-        mmOutStream.write("\n".toByteArray())
-        mmOutStream.flush()
-      } catch (_: IOException) {}
+      if (closed.get()) return
+      writeQueue.offer(bytes.copyOf())
     }
 
     fun cancel() {
+      if (!closed.compareAndSet(false, true)) return
+      writerThread.interrupt()
       try {
         socket.close()
       } catch (_: IOException) {}

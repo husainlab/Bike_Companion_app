@@ -16,9 +16,16 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 import { enableFreeze } from 'react-native-screens';
+import {
+  endActiveRideSession,
+  incrementActiveRideNotifications,
+} from '@/actions/cockpit';
 import { ScreenError } from '@/screens/ScreenError';
-import { bootApp, useAppState } from '@/state/app';
-import { initCompanionBridge } from '@/state/companion';
+import { bootApp, getStore, useAppState } from '@/state/app';
+import {
+  initCompanionBridge,
+  registerCompanionRideHandlers,
+} from '@/state/companion';
 import { maybeCheckForAppUpdate } from '@/state/update';
 import { AppProviders } from '@/ui/AppProviders';
 import { getPalette } from '@/ui/palette';
@@ -51,7 +58,15 @@ export default function RootLayout() {
       .then((appState) => {
         if (!active) return;
         setBooted(true);
-        initCompanionBridge(appState.settings.relayMode === 'receiver').catch(() => {});
+        registerCompanionRideHandlers({
+          onNotificationsAdded: (delta) => {
+            incrementActiveRideNotifications(getStore(), delta).catch(() => {});
+          },
+          onDisconnected: () => {
+            endActiveRideSession(getStore()).catch(() => {});
+          },
+        });
+        initCompanionBridge(appState.settings.relayMode).catch(() => {});
         maybeCheckForAppUpdate().catch(() => {});
       })
       .catch(() => {

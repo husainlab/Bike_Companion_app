@@ -25,9 +25,9 @@ export default function OnboardingScreen() {
   const handleContinue = async () => {
     setBusy(true);
     try {
-      await requestAllPillionPermissions().catch(() => false);
+      await requestAllPillionPermissions(selected).catch(() => false);
       await completeOnboarding(getStore(), selected);
-      await initCompanionBridge(selected === 'receiver').catch(() => {});
+      await initCompanionBridge(selected).catch(() => {});
     } catch (err) {
       const detail = err instanceof Error && err.message ? `: ${err.message}` : '';
       showToast(`Failed to save device role${detail}`, 'error');

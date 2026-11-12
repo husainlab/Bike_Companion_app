@@ -70,6 +70,7 @@ type PillionNativeModuleInterface = {
   openOverlaySettings(): Promise<void>;
   startServer(): Promise<void>;
   stopServer(): Promise<void>;
+  setRelayRole(mode: 'receiver' | 'sender'): Promise<void>;
   connectToDevice(address: string): Promise<void>;
   disconnect(): Promise<void>;
   setAutoReconnect(enabled: boolean): Promise<void>;

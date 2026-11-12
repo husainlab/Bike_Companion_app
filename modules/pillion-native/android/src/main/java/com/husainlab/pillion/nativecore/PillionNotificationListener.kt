@@ -45,53 +45,43 @@ class PillionNotificationListener : NotificationListenerService() {
   private var lastTitle = ""
   private var lastArtist = ""
   private var isCallListenerRegistered = false
+  private var telephonyCallbackRef: TelephonyCallback? = null
+  @Suppress("DEPRECATION")
+  private var phoneStateListenerRef: PhoneStateListener? = null
+  @Volatile private var lastSentCallKey: String = ""
 
   private val sessionListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
     updateControllers(controllers)
   }
 
-  private val syncReceiver = object : BroadcastReceiver() {
+  private val internalSyncReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
-      when (intent?.action) {
-        PillionProtocol.ACTION_SYNC -> {
-          val batteryStatus = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-          val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-          if (level != -1) {
-            PillionStateStore.sendMessage("BATTERY|$level")
-          }
-          checkAndSendMediaUpdate()
-          PillionStateStore.sendMessage("NOTIF_CLEAR_ALL")
-          try {
-            activeNotifications?.forEach { sbn ->
-              onNotificationPosted(sbn)
-            }
-          } catch (_: Exception) {}
+      if (intent?.action != PillionProtocol.ACTION_SYNC) return
+      val batteryStatus = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+      val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+      if (level != -1) {
+        PillionStateStore.sendMessage("BATTERY|$level")
+      }
+      checkAndSendMediaUpdate()
+      PillionStateStore.sendMessage("NOTIF_CLEAR_ALL")
+      try {
+        activeNotifications?.forEach { sbn ->
+          onNotificationPosted(sbn)
         }
-        TelephonyManager.ACTION_PHONE_STATE_CHANGED -> {
-          val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
-          val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
-          when (state) {
-            TelephonyManager.EXTRA_STATE_RINGING -> {
-              if (!number.isNullOrEmpty()) {
-                lastCallerNumber = PillionProtocol.sanitizeField(number)
-                lastCallerName = PillionProtocol.sanitizeField(getContactName(number))
-              }
-              val name = lastCallerName.ifEmpty { "Incoming Call" }
-              PillionStateStore.sendMessage("CALL_IN|$name|$lastCallerNumber")
-            }
-            TelephonyManager.EXTRA_STATE_IDLE -> {
-              lastCallerName = ""
-              lastCallerNumber = ""
-              activeCallAnswerAction = null
-              activeCallDeclineAction = null
-              PillionStateStore.sendMessage("CALL_END")
-            }
-            TelephonyManager.EXTRA_STATE_OFFHOOK -> {
-              val name = lastCallerName.ifEmpty { "Active Call" }
-              PillionStateStore.sendMessage("CALL_ACTIVE|$name|$lastCallerNumber")
-            }
-          }
-        }
+      } catch (_: Exception) {}
+    }
+  }
+
+  private val systemPhoneStateReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+      if (intent?.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
+      val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
+      @Suppress("DEPRECATION")
+      val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+      when (state) {
+        TelephonyManager.EXTRA_STATE_RINGING -> emitCallRinging(number)
+        TelephonyManager.EXTRA_STATE_IDLE -> emitCallEnded()
+        TelephonyManager.EXTRA_STATE_OFFHOOK -> emitCallOffhook()
       }
     }
   }
@@ -126,17 +116,17 @@ class PillionNotificationListener : NotificationListenerService() {
     setupCallListener()
     registerHandlers()
 
-    val intentFilter = IntentFilter().apply {
-      addAction(PillionProtocol.ACTION_SYNC)
-      addAction(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
-    }
+    val internalFilter = IntentFilter(PillionProtocol.ACTION_SYNC)
+    val phoneFilter = IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED), Context.RECEIVER_EXPORTED)
-      registerReceiver(syncReceiver, intentFilter, Context.RECEIVER_EXPORTED)
+      registerReceiver(systemPhoneStateReceiver, phoneFilter, Context.RECEIVER_EXPORTED)
+      registerReceiver(internalSyncReceiver, internalFilter, Context.RECEIVER_NOT_EXPORTED)
     } else {
       registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-      registerReceiver(syncReceiver, intentFilter)
+      registerReceiver(systemPhoneStateReceiver, phoneFilter)
+      registerReceiver(internalSyncReceiver, internalFilter)
     }
 
     val batteryStatus = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -160,6 +150,7 @@ class PillionNotificationListener : NotificationListenerService() {
 
   override fun onListenerDisconnected() {
     super.onListenerDisconnected()
+    teardownCallListener()
     PillionStateStore.notificationDismissHandler = null
     PillionStateStore.notificationReplyHandler = null
     PillionStateStore.callActionFallbackHandler = null
@@ -167,9 +158,19 @@ class PillionNotificationListener : NotificationListenerService() {
     mediaSessionManager?.removeOnActiveSessionsChangedListener(sessionListener)
     try {
       unregisterReceiver(batteryReceiver)
-      unregisterReceiver(syncReceiver)
+    } catch (_: Exception) {}
+    try {
+      unregisterReceiver(systemPhoneStateReceiver)
+    } catch (_: Exception) {}
+    try {
+      unregisterReceiver(internalSyncReceiver)
     } catch (_: Exception) {}
     removeAllCallbacks()
+  }
+
+  override fun onDestroy() {
+    teardownCallListener()
+    super.onDestroy()
   }
 
   private fun registerHandlers() {
@@ -304,51 +305,77 @@ class PillionNotificationListener : NotificationListenerService() {
       val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         try {
-          telephonyManager.registerTelephonyCallback(
-            mainExecutor,
-            object : TelephonyCallback(), TelephonyCallback.CallStateListener {
-              override fun onCallStateChanged(state: Int) {
-                handleCallState(state, null)
-              }
+          val cb = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+            override fun onCallStateChanged(state: Int) {
+              handleCallState(state, null)
             }
-          )
+          }
+          telephonyManager.registerTelephonyCallback(mainExecutor, cb)
+          telephonyCallbackRef = cb
           isCallListenerRegistered = true
         } catch (_: SecurityException) {}
       } else {
-        telephonyManager.listen(
-          object : PhoneStateListener() {
-            override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-              handleCallState(state, phoneNumber)
-            }
-          },
-          PhoneStateListener.LISTEN_CALL_STATE
-        )
+        val listener = object : PhoneStateListener() {
+          override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+            handleCallState(state, phoneNumber)
+          }
+        }
+        telephonyManager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
+        phoneStateListenerRef = listener
         isCallListenerRegistered = true
       }
     } catch (_: Exception) {}
   }
 
+  @Suppress("DEPRECATION")
+  private fun teardownCallListener() {
+    if (!isCallListenerRegistered) return
+    try {
+      val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        telephonyCallbackRef?.let { telephonyManager.unregisterTelephonyCallback(it) }
+      } else {
+        phoneStateListenerRef?.let { telephonyManager.listen(it, PhoneStateListener.LISTEN_NONE) }
+      }
+    } catch (_: Exception) {}
+    telephonyCallbackRef = null
+    phoneStateListenerRef = null
+    isCallListenerRegistered = false
+  }
+
+  private fun emitCallPacket(packet: String) {
+    if (packet == lastSentCallKey) return
+    lastSentCallKey = packet
+    PillionStateStore.sendMessage(packet)
+  }
+
+  private fun emitCallRinging(phoneNumber: String?) {
+    if (!phoneNumber.isNullOrEmpty()) {
+      lastCallerNumber = PillionProtocol.sanitizeField(phoneNumber)
+      lastCallerName = PillionProtocol.sanitizeField(getContactName(phoneNumber))
+    }
+    val name = lastCallerName.ifEmpty { "Incoming Call" }
+    emitCallPacket("CALL_IN|$name|$lastCallerNumber")
+  }
+
+  private fun emitCallEnded() {
+    lastCallerName = ""
+    lastCallerNumber = ""
+    activeCallAnswerAction = null
+    activeCallDeclineAction = null
+    emitCallPacket("CALL_END")
+  }
+
+  private fun emitCallOffhook() {
+    val name = lastCallerName.ifEmpty { "Active Call" }
+    emitCallPacket("CALL_ACTIVE|$name|$lastCallerNumber")
+  }
+
   private fun handleCallState(state: Int, phoneNumber: String?) {
     when (state) {
-      TelephonyManager.CALL_STATE_RINGING -> {
-        if (!phoneNumber.isNullOrEmpty()) {
-          lastCallerNumber = PillionProtocol.sanitizeField(phoneNumber)
-          lastCallerName = PillionProtocol.sanitizeField(getContactName(phoneNumber))
-        }
-        val name = lastCallerName.ifEmpty { "Incoming Call" }
-        PillionStateStore.sendMessage("CALL_IN|$name|$lastCallerNumber")
-      }
-      TelephonyManager.CALL_STATE_IDLE -> {
-        lastCallerName = ""
-        lastCallerNumber = ""
-        activeCallAnswerAction = null
-        activeCallDeclineAction = null
-        PillionStateStore.sendMessage("CALL_END")
-      }
-      TelephonyManager.CALL_STATE_OFFHOOK -> {
-        val name = lastCallerName.ifEmpty { "Active Call" }
-        PillionStateStore.sendMessage("CALL_ACTIVE|$name|$lastCallerNumber")
-      }
+      TelephonyManager.CALL_STATE_RINGING -> emitCallRinging(phoneNumber)
+      TelephonyManager.CALL_STATE_IDLE -> emitCallEnded()
+      TelephonyManager.CALL_STATE_OFFHOOK -> emitCallOffhook()
     }
   }
 
@@ -380,34 +407,38 @@ class PillionNotificationListener : NotificationListenerService() {
   }
 
   override fun onNotificationPosted(sbn: StatusBarNotification) {
+    val pkg = sbn.packageName
+    if (pkg == packageName) return
+
     val category = sbn.notification.category
+    val extras = sbn.notification.extras
+    val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+
     if (category == Notification.CATEGORY_CALL) {
       captureCallActions(sbn.notification)
-      val extras = sbn.notification.extras
-      val callerTitle = PillionProtocol.sanitizeField(extras.getString("android.title") ?: "Incoming Call")
+      val callerTitle = PillionProtocol.sanitizeField(rawTitle ?: "Incoming Call")
       if (callerTitle.isNotEmpty()) {
         lastCallerName = callerTitle
       }
-      val textHint = PillionProtocol.sanitizeField(extras.getCharSequence("android.text")?.toString() ?: "")
-      if (textHint.lowercase().contains("ongoing") || textHint.lowercase().contains("active") || textHint.lowercase().contains("dialing")) {
-        PillionStateStore.sendMessage("CALL_ACTIVE|$callerTitle|$lastCallerNumber")
-      } else {
-        PillionStateStore.sendMessage("CALL_IN|$callerTitle|$lastCallerNumber")
-      }
+      val textHint = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+      val packetType = PillionProtocol.classifyCallNotification(
+        textHint = textHint,
+        currentCallActive = lastSentCallKey.startsWith("CALL_ACTIVE|"),
+        currentCallIncoming = lastSentCallKey.startsWith("CALL_IN|")
+      )
+      emitCallPacket("$packetType|$callerTitle|$lastCallerNumber")
       return
     }
 
     if (sbn.isOngoing) return
 
     val isMedia = category == Notification.CATEGORY_TRANSPORT ||
-      sbn.notification.extras.containsKey(Notification.EXTRA_MEDIA_SESSION)
+      extras.containsKey(Notification.EXTRA_MEDIA_SESSION)
     if (isMedia) return
 
     val key = PillionProtocol.escapeKey(sbn.key)
-    val pkg = sbn.packageName
-    val extras = sbn.notification.extras
-    val title = PillionProtocol.sanitizeField(extras.getString("android.title") ?: "New Notification")
-    val text = PillionProtocol.sanitizeField(extras.getCharSequence("android.text")?.toString() ?: "")
+    val title = PillionProtocol.sanitizeField(rawTitle ?: "New Notification")
+    val text = PillionProtocol.sanitizeField(extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: "")
 
     val replyPair = findReplyAction(sbn.notification)
     trackedNotifications[key] = StoredNotificationEntry(
@@ -416,20 +447,19 @@ class PillionNotificationListener : NotificationListenerService() {
       remoteInputs = replyPair?.second
     )
 
-    if (pkg != packageName) {
-      val canReplyFlag = if (replyPair != null) "1" else "0"
-      PillionStateStore.sendMessage("NOTIF_ADD2|$key|$pkg|$canReplyFlag|$title|$text")
-    }
+    val canReplyFlag = if (replyPair != null) "1" else "0"
+    PillionStateStore.sendMessage("NOTIF_ADD2|$key|$pkg|$canReplyFlag|$title|$text")
   }
 
   override fun onNotificationRemoved(sbn: StatusBarNotification) {
+    if (sbn.packageName == packageName) return
     val key = PillionProtocol.escapeKey(sbn.key)
     trackedNotifications.remove(key)
     PillionStateStore.sendMessage("NOTIF_REMOVE|$key")
     if (sbn.notification.category == Notification.CATEGORY_CALL) {
       activeCallAnswerAction = null
       activeCallDeclineAction = null
-      PillionStateStore.sendMessage("CALL_END")
+      emitCallPacket("CALL_END")
     }
   }
 }

@@ -9,7 +9,9 @@
     "android": "expo run:android",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify": "pnpm typecheck && pnpm lint && pnpm test && npx expo export --platform android --output-dir /tmp/pillion-bundle-check && rm -rf /tmp/pillion-bundle-check",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
     "@expo-google-fonts/atkinson-hyperlegible": "^0.4.1",

@@ -100,16 +100,52 @@ export async function logRideSession(
 export async function startRideSession(
   store: PillionStore,
   mode: RelayMode,
-  deviceName: string
-): Promise<void> {
-  const now = Date.now();
+  deviceName: string,
+  nowMs: number = Date.now()
+): Promise<string> {
+  const existing = await store.listRideSessions(1);
+  if (existing.length > 0 && existing[0].endedAt === null) {
+    await store.saveRideSession({
+      ...existing[0],
+      endedAt: Math.max(existing[0].startedAt, nowMs),
+    });
+  }
+
+  const id = `ride-${nowMs}-${Math.floor(Math.random() * 10_000)}`;
   await logRideSession(store, {
-    id: `ride-${now}`,
+    id,
     mode,
     deviceName,
-    startedAt: now,
+    startedAt: nowMs,
     endedAt: null,
     notificationsRelayed: 0,
+  });
+  return id;
+}
+
+export async function incrementActiveRideNotifications(
+  store: PillionStore,
+  delta: number = 1
+): Promise<void> {
+  const safeDelta = z.number().int().positive().parse(delta);
+  const existing = await store.listRideSessions(1);
+  if (existing.length === 0 || existing[0].endedAt !== null) return;
+  await logRideSession(store, {
+    ...existing[0],
+    notificationsRelayed: existing[0].notificationsRelayed + safeDelta,
+  });
+}
+
+export async function endActiveRideSession(
+  store: PillionStore,
+  endedAt: number = Date.now()
+): Promise<void> {
+  const existing = await store.listRideSessions(1);
+  if (existing.length === 0 || existing[0].endedAt !== null) return;
+  const safeEnd = Math.max(existing[0].startedAt, endedAt);
+  await logRideSession(store, {
+    ...existing[0],
+    endedAt: safeEnd,
   });
 }
 
