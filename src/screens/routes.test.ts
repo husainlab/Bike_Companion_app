@@ -73,6 +73,39 @@ describe('application architecture & regression contracts', () => {
     expect(nativeModuleKt).toContain('startForegroundService(');
     expect(nativeModuleKt).toContain('LinkedBlockingQueue');
     expect(nativeModuleKt).toContain('resetTransientState');
+    expect(nativeModuleKt).toContain('PREF_AUTO_START_OVERLAY');
+    expect(nativeModuleKt).toContain('/call/mute');
+    expect(nativeModuleKt).toContain('CALL_MUTE|');
+
+    const overlayServiceKt = fs.readFileSync(
+      path.join(
+        ROOT,
+        'modules/pillion-native/android/src/main/java/com/husainlab/pillion/nativecore/PillionOverlayService.kt'
+      ),
+      'utf8'
+    );
+    expect(overlayServiceKt).toContain('formatCallElapsed');
+    expect(overlayServiceKt).toContain('/call/mute');
+
+    const protocolKt = fs.readFileSync(
+      path.join(
+        ROOT,
+        'modules/pillion-native/android/src/main/java/com/husainlab/pillion/nativecore/PillionProtocol.kt'
+      ),
+      'utf8'
+    );
+    expect(protocolKt).toContain('data class CallMute');
+    expect(protocolKt).toContain('fun formatCallElapsed(');
+
+    const cockpitSrc = fs.readFileSync(path.join(ROOT, 'app/(tabs)/index.tsx'), 'utf8');
+    expect(cockpitSrc).toContain('<CallHudCard');
+    expect(cockpitSrc).toContain('<PocketGuardianCard');
+
+    const phoneSrc = fs.readFileSync(path.join(ROOT, 'app/(tabs)/phone.tsx'), 'utf8');
+    expect(phoneSrc).toContain('<CallHudCard');
+
+    const settingsSrc = fs.readFileSync(path.join(ROOT, 'app/(tabs)/settings.tsx'), 'utf8');
+    expect(settingsSrc).toContain('autoVolumeEnabled');
   });
 });
 

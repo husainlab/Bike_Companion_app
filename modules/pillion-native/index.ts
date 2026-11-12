@@ -50,8 +50,12 @@ export interface CompanionSnapshot {
   progressMs: number;
   durationMs: number;
   batteryLevel: number;
+  batteryTempC: number;
+  currentSpeedKmh: number;
   isCallActive: boolean;
   isCallIncoming: boolean;
+  isCallMuted: boolean;
+  callStartedAtMs: number;
   callerName: string;
   callerNumber: string;
   notifications: MirrorNotification[];
@@ -76,6 +80,7 @@ type PillionNativeModuleInterface = {
   setAutoReconnect(enabled: boolean): Promise<void>;
   startOverlay(): Promise<boolean>;
   stopOverlay(): Promise<void>;
+  setAutoStartOverlay(enabled: boolean): Promise<void>;
   syncContacts(): Promise<void>;
   launchGoogleMaps(splitScreen: boolean): Promise<boolean>;
   sendCommand(path: string): Promise<void>;
@@ -100,8 +105,12 @@ export const EMPTY_SNAPSHOT: CompanionSnapshot = {
   progressMs: 0,
   durationMs: 0,
   batteryLevel: -1,
+  batteryTempC: -1,
+  currentSpeedKmh: 0,
   isCallActive: false,
   isCallIncoming: false,
+  isCallMuted: false,
+  callStartedAtMs: 0,
   callerName: '',
   callerNumber: '',
   notifications: [],

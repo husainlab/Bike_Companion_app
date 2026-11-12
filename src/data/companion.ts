@@ -50,6 +50,10 @@ export async function stopCockpitOverlay(): Promise<void> {
   await PillionNative?.stopOverlay();
 }
 
+export async function setNativeAutoStartOverlay(enabled: boolean): Promise<void> {
+  await PillionNative?.setAutoStartOverlay(enabled);
+}
+
 export async function openNotificationAccessSettings(): Promise<void> {
   await PillionNative?.openNotificationListenerSettings();
 }
@@ -73,6 +77,8 @@ export async function sendCockpitCommand(
     | '/volume/down'
     | '/call/answer'
     | '/call/decline'
+    | '/call/mute'
+    | `/call/mute|${'0' | '1'}`
     | '/sync/contacts'
     | `/call/dial|${string}`
     | `/notif/dismiss|${string}`

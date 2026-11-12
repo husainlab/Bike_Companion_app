@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDurationMs, formatRelativeTime } from './time';
+import { formatCallElapsed, formatDurationMs, formatRelativeTime } from './time';
 
 describe('time helpers', () => {
   it('formats playback durations safely', () => {
@@ -7,6 +7,15 @@ describe('time helpers', () => {
     expect(formatDurationMs(-500)).toBe('00:00');
     expect(formatDurationMs(Number.NaN)).toBe('00:00');
     expect(formatDurationMs(65_000)).toBe('01:05');
+  });
+
+  it('formats call elapsed time across invalid ranges, mm:ss, and h:mm:ss', () => {
+    expect(formatCallElapsed(0, 10_000)).toBe('00:00');
+    expect(formatCallElapsed(10_000, 5000)).toBe('00:00');
+    expect(formatCallElapsed(Number.NaN, 5000)).toBe('00:00');
+    expect(formatCallElapsed(1000, 46_000)).toBe('00:45');
+    expect(formatCallElapsed(1000, 126_000)).toBe('02:05');
+    expect(formatCallElapsed(1000, 3_726_000)).toBe('1:02:05');
   });
 
   it('formats relative timestamps across seconds, minutes, hours, and days', () => {

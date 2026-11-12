@@ -52,6 +52,7 @@ class PillionOverlayService : Service() {
     val callsSubTab: CallsSubTab,
     val isCallActive: Boolean,
     val isCallIncoming: Boolean,
+    val isCallMuted: Boolean,
     val callerName: String,
     val callerNumber: String,
     val keypadText: String,
@@ -86,10 +87,27 @@ class PillionOverlayService : Service() {
   private var mediaArtistView: TextView? = null
   private var mediaProgressView: ProgressBar? = null
   private var mediaPlayPauseButton: TextView? = null
+  private var callTimerView: TextView? = null
 
   private val hidePopupRunnable = Runnable {
     popupNotification = null
     render()
+  }
+
+  private val callTimerRunnable: Runnable = object : Runnable {
+    override fun run() {
+      syncCallTimer()
+    }
+  }
+
+  private fun syncCallTimer() {
+    mainHandler.removeCallbacks(callTimerRunnable)
+    if (isExpanded && PillionStateStore.isCallActive && !PillionStateStore.isCallIncoming && PillionStateStore.callStartedAtMs > 0L) {
+      val elapsed = PillionProtocol.formatCallElapsed(PillionStateStore.callStartedAtMs)
+      val mutedTag = if (PillionStateStore.isCallMuted) " • MUTED" else ""
+      callTimerView?.text = "ACTIVE CALL • $elapsed$mutedTag • AUDIO ON POCKET PHONE"
+      mainHandler.postDelayed(callTimerRunnable, 1000L)
+    }
   }
 
   private val stateListener: () -> Unit = {
@@ -341,6 +359,7 @@ class PillionOverlayService : Service() {
       callsSubTab = callsSubTab,
       isCallActive = PillionStateStore.isCallActive,
       isCallIncoming = PillionStateStore.isCallIncoming,
+      isCallMuted = PillionStateStore.isCallMuted,
       callerName = PillionStateStore.callerName,
       callerNumber = PillionStateStore.callerNumber,
       keypadText = keypadDigits.toString(),
@@ -362,6 +381,7 @@ class PillionOverlayService : Service() {
     mediaArtistView = null
     mediaProgressView = null
     mediaPlayPauseButton = null
+    callTimerView = null
   }
 
   private fun patchDynamicViews() {
@@ -373,18 +393,21 @@ class PillionOverlayService : Service() {
     val muted = Color.parseColor("#B5BAB3")
     val connected = PillionStateStore.connectionStatus == "Connected"
     val level = PillionStateStore.batteryLevel
+    val tempC = PillionStateStore.batteryTempC
 
     collapsedStatusView?.let { tv ->
       tv.text = when {
         PillionStateStore.isCallActive -> "CALL"
+        tempC >= 45 -> "HOT!"
+        level in 0..15 -> "LOW!"
         level >= 0 -> "$level%"
         connected -> "LIVE"
         else -> "OFF"
       }
       tv.setTextColor(
         when {
-          PillionStateStore.isCallActive -> crimson
-          level in 0..20 -> crimson
+          PillionStateStore.isCallActive || tempC >= 45 || level in 0..15 -> crimson
+          tempC >= 40 -> orange
           connected -> emerald
           else -> muted
         }
@@ -398,8 +421,10 @@ class PillionOverlayService : Service() {
       tv.background = roundedBox(cardBg, if (connected) emerald else border, 1, 5)
     }
     headerBatteryView?.let { tv ->
-      tv.text = if (level >= 0) "  $level%" else "  --%"
-      tv.setTextColor(if (level in 0..20) crimson else Color.WHITE)
+      val batteryLabel = if (level >= 0) "$level%" else "--%"
+      val tempLabel = if (tempC >= 40) " • ${tempC}°C" else ""
+      tv.text = "  $batteryLabel$tempLabel"
+      tv.setTextColor(if (tempC >= 45 || level in 0..15) crimson else if (tempC >= 40) orange else Color.WHITE)
     }
     mediaTitleView?.text = PillionStateStore.songTitle
     mediaArtistView?.text = PillionStateStore.artistName
@@ -416,6 +441,7 @@ class PillionOverlayService : Service() {
     val signature = buildRenderSignature()
     if (signature == lastSignature && root.childCount > 0) {
       patchDynamicViews()
+      syncCallTimer()
       return
     }
     lastSignature = signature
@@ -474,6 +500,7 @@ class PillionOverlayService : Service() {
         render()
       }
       root.addView(row)
+      syncCallTimer()
       return
     }
 
@@ -523,6 +550,7 @@ class PillionOverlayService : Service() {
         render()
       }
       root.addView(pillRow)
+      syncCallTimer()
       return
     }
 
@@ -580,20 +608,29 @@ class PillionOverlayService : Service() {
 
     // Pinned Call HUD (takes priority over body when ringing or on active call)
     if (PillionStateStore.isCallActive) {
+      val isIncoming = PillionStateStore.isCallIncoming
+      val isMuted = PillionStateStore.isCallMuted
       val callBox = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(12), dp(12), dp(12), dp(12))
-        background = roundedBox(cardBg, if (PillionStateStore.isCallIncoming) crimson else emerald, 1, 9)
+        background = roundedBox(cardBg, if (isIncoming) crimson else if (isMuted) orange else emerald, 1, 9)
         val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         lp.bottomMargin = dp(10)
         layoutParams = lp
       }
-      callBox.addView(TextView(this).apply {
-        text = if (PillionStateStore.isCallIncoming) "INCOMING CALL • AUDIO ON POCKET PHONE" else "ACTIVE CALL • AUDIO ON POCKET PHONE"
-        setTextColor(if (PillionStateStore.isCallIncoming) crimson else emerald)
+      val statusTv = TextView(this).apply {
+        val elapsed = if (!isIncoming && PillionStateStore.callStartedAtMs > 0L) {
+          " • " + PillionProtocol.formatCallElapsed(PillionStateStore.callStartedAtMs)
+        } else ""
+        val mutedTag = if (isMuted) " • MUTED" else ""
+        text = if (isIncoming) "INCOMING CALL • AUDIO ON POCKET PHONE" else "ACTIVE CALL$elapsed$mutedTag • AUDIO ON POCKET PHONE"
+        setTextColor(if (isIncoming) crimson else if (isMuted) orange else emerald)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
         typeface = Typeface.MONOSPACE
-      })
+      }
+      callTimerView = statusTv
+      callBox.addView(statusTv)
+
       callBox.addView(TextView(this).apply {
         text = PillionStateStore.callerName.ifEmpty { "Unknown Caller" }
         setTextColor(Color.WHITE)
@@ -619,7 +656,7 @@ class PillionOverlayService : Service() {
         layoutParams = lp
       }
       actions.addView(makeButton(
-        if (PillionStateStore.isCallIncoming) "DECLINE" else "END CALL",
+        if (isIncoming) "DECLINE" else "END CALL",
         crimson,
         Color.WHITE,
         crimson,
@@ -630,9 +667,23 @@ class PillionOverlayService : Service() {
         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
       })
 
-      if (PillionStateStore.isCallIncoming) {
+      if (isIncoming) {
         actions.addView(makeButton("ANSWER", emerald, Color.BLACK, emerald, textSp = 13f) {
           PillionStateStore.sendMessage("/call/answer")
+        }.apply {
+          val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+          lp.marginStart = dp(8)
+          layoutParams = lp
+        })
+      } else {
+        actions.addView(makeButton(
+          if (isMuted) "MUTED" else "MUTE MIC",
+          if (isMuted) orange else surfaceMuted,
+          if (isMuted) Color.BLACK else Color.WHITE,
+          if (isMuted) orange else border,
+          textSp = 13f
+        ) {
+          PillionStateStore.sendMessage("/call/mute")
         }.apply {
           val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
           lp.marginStart = dp(8)
@@ -1008,6 +1059,7 @@ class PillionOverlayService : Service() {
     panel.addView(dock)
 
     root.addView(panel)
+    syncCallTimer()
   }
 
   private fun makeEmptyRow(
@@ -1084,6 +1136,7 @@ class PillionOverlayService : Service() {
     PillionStateStore.removeListener(stateListener)
     PillionStateStore.notifyChanged()
     mainHandler.removeCallbacks(hidePopupRunnable)
+    mainHandler.removeCallbacks(callTimerRunnable)
     rootContainer?.let {
       try {
         windowManager.removeView(it)

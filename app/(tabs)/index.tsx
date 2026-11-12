@@ -36,7 +36,9 @@ import {
   useCompanionState,
 } from '@/state/companion';
 import { Button } from '@/ui/Button';
+import { CallHudCard } from '@/ui/CallHudCard';
 import { Card } from '@/ui/Card';
+import { PocketGuardianCard } from '@/ui/PocketGuardianCard';
 import { Icon } from '@/ui/Icon';
 import { getPalette } from '@/ui/palette';
 import { Press } from '@/ui/Press';
@@ -188,62 +190,35 @@ export default function CockpitScreen() {
 
         {settings.relayMode === 'receiver' ? (
           <View className="gap-4">
-            {companion.isCallActive ? (
-              <Card tone="alert" className="gap-4">
-                <View className="flex-row items-center justify-between">
-                  <View className="flex-row items-center gap-2">
-                    <Icon name="phoneIncoming" size={20} color={palette.danger} />
-                    <Text className="font-mono-bold text-xs uppercase tracking-widest text-danger">
-                      {companion.isCallIncoming ? 'INCOMING CALL' : 'CALL ACTIVE'}
-                    </Text>
-                  </View>
-                </View>
-                <Text className="font-bold text-2xl text-foreground" numberOfLines={1}>
-                  {companion.callerName || companion.callerNumber || 'Unknown Caller'}
-                </Text>
-                {companion.callerNumber && companion.callerName !== companion.callerNumber ? (
-                  <Text className="font-mono text-sm text-foreground-muted" numberOfLines={1}>
-                    {companion.callerNumber}
-                  </Text>
-                ) : null}
-                <View className="flex-row gap-3">
-                  <Button
-                    label={companion.isCallIncoming ? 'Decline' : 'End Call'}
-                    icon="phoneOff"
-                    tone="danger"
-                    onPress={() => sendCockpitCommand('/call/decline')}
-                    className="flex-1"
-                  />
-                  {companion.isCallIncoming ? (
-                    <Button
-                      label="Answer"
-                      icon="phoneIncoming"
-                      tone="accent"
-                      onPress={() => sendCockpitCommand('/call/answer')}
-                      className="flex-1"
-                    />
-                  ) : null}
-                </View>
-              </Card>
-            ) : null}
+            <CallHudCard companion={companion} />
+            <PocketGuardianCard companion={companion} />
 
             <View className={isWide ? 'flex-row items-start gap-4' : 'gap-4'}>
               {/* Asymmetric sunlight-readable Media Deck */}
               <Card className={isWide ? 'flex-1 gap-4' : 'gap-4'}>
                 <View className="flex-row items-start justify-between gap-3">
-                  <View className="flex-1 gap-1">
-                    <Text className="font-mono text-xs uppercase tracking-widest text-foreground-muted">
-                      NOW PLAYING
-                    </Text>
-                    <Text className="font-bold text-2xl text-foreground" numberOfLines={2}>
+                  <View className="flex-1 min-w-0 pr-2 gap-0.5">
+                    <View className="flex-row items-center gap-2">
+                      <Text className="font-mono text-xs uppercase tracking-widest text-foreground-muted">
+                        NOW PLAYING
+                      </Text>
+                      {settings.autoVolumeEnabled ? (
+                        <View className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5">
+                          <Text className="font-mono text-[10px] text-primary">
+                            AUTO VOL • {Math.round(companion.currentSpeedKmh)} KM/H
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text className="font-bold text-2xl text-foreground leading-tight break-words" numberOfLines={2}>
                       {companion.songTitle}
                     </Text>
-                    <Text className="text-base text-foreground-muted" numberOfLines={1}>
+                    <Text className="text-base text-foreground-muted break-words" numberOfLines={1}>
                       {companion.artistName}
                     </Text>
                   </View>
                   {companion.durationMs > 0 ? (
-                    <Text className="font-mono-bold text-sm text-primary">
+                    <Text className="font-mono-bold text-sm text-primary shrink-0 text-right pt-0.5">
                       {formatDurationMs(companion.progressMs)} /{' '}
                       {formatDurationMs(companion.durationMs)}
                     </Text>
@@ -262,7 +237,7 @@ export default function CockpitScreen() {
                   <Press
                     onPress={() => sendCockpitCommand('/media/prev')}
                     accessibilityLabel="Previous track"
-                    className="w-16 min-h-hit items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted"
+                    className="w-16 min-h-[64px] items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted active:border-primary"
                   >
                     <Icon name="skipBack" size={24} color={palette.foreground} />
                   </Press>
@@ -270,21 +245,21 @@ export default function CockpitScreen() {
                     onPress={() => sendCockpitCommand('/media/playpause')}
                     haptic="confirm"
                     accessibilityLabel={companion.isPlaying ? 'Pause' : 'Play'}
-                    className="flex-1 min-h-hit flex-row items-center justify-center gap-2 rounded-sm border-[1.5px] border-primary bg-primary"
+                    className="flex-1 min-h-[64px] flex-row items-center justify-center gap-2 rounded-sm border-[1.5px] border-primary bg-primary active:opacity-90"
                   >
                     <Icon
                       name={companion.isPlaying ? 'pause' : 'play'}
                       size={24}
                       color={palette.onPrimary}
                     />
-                    <Text className="font-bold text-lg text-on-primary">
+                    <Text className="font-bold text-lg text-on-primary tracking-wide">
                       {companion.isPlaying ? 'PAUSE' : 'PLAY'}
                     </Text>
                   </Press>
                   <Press
                     onPress={() => sendCockpitCommand('/media/next')}
                     accessibilityLabel="Next track"
-                    className="w-16 min-h-hit items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted"
+                    className="w-16 min-h-[64px] items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted active:border-primary"
                   >
                     <Icon name="skipForward" size={24} color={palette.foreground} />
                   </Press>

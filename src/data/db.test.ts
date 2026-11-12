@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
     theme: 'dark',
     keep_awake_on_ride: 1,
     auto_start_overlay: 0,
+    auto_volume_enabled: 0,
     onboarding_complete: 0,
   };
   let storedDevices: { address: string; name: string; last_connected_at: number }[] = [];
@@ -37,7 +38,8 @@ const mocks = vi.hoisted(() => {
           theme: String(params[1]),
           keep_awake_on_ride: Number(params[2]),
           auto_start_overlay: Number(params[3]),
-          onboarding_complete: Number(params[4]),
+          auto_volume_enabled: Number(params[4]),
+          onboarding_complete: Number(params[5]),
         };
       } else if (sql.includes('INSERT INTO paired_devices')) {
         const address = String(params[0]);
@@ -102,6 +104,7 @@ const mocks = vi.hoisted(() => {
         theme: 'dark',
         keep_awake_on_ride: 1,
         auto_start_overlay: 0,
+        auto_volume_enabled: 0,
         onboarding_complete: 0,
       };
       storedDevices = [];

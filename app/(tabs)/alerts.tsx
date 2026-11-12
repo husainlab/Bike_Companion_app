@@ -56,32 +56,32 @@ export default function AlertsScreen() {
           ) : (
             companion.notifications.map((item) => (
               <Card key={item.key} className="gap-2.5">
-                <View className="flex-row items-center justify-between gap-2">
-                  <Text className="font-bold text-base text-foreground flex-1" numberOfLines={1}>
+                <View className="flex-row items-center justify-between gap-2 min-w-0">
+                  <Text className="font-bold text-base text-foreground flex-1 min-w-0 break-words" numberOfLines={1}>
                     {item.title}
                   </Text>
-                  <Text className="font-mono text-xs text-foreground-muted">
+                  <Text className="font-mono text-xs text-foreground-muted shrink-0">
                     {formatRelativeTime(item.receivedAt)}
                   </Text>
                   <Press
                     onPress={() => dismissMirroredNotification(item.key)}
                     accessibilityLabel="Dismiss notification"
-                    className="h-9 w-9 items-center justify-center rounded-xs border-[1.5px] border-border bg-surface-muted"
+                    className="h-9 w-9 shrink-0 items-center justify-center rounded-xs border-[1.5px] border-border bg-surface-muted active:border-danger"
                   >
                     <Icon name="x" size={16} color={palette.foregroundMuted} />
                   </Press>
                 </View>
                 {item.text ? (
-                  <Text className="text-sm text-foreground-muted" numberOfLines={3}>
+                  <Text className="text-sm text-foreground-muted leading-relaxed break-words" numberOfLines={3}>
                     {item.text}
                   </Text>
                 ) : null}
-                <View className="flex-row items-center justify-between gap-2">
-                  <Text className="font-mono text-xs text-foreground-muted flex-1" numberOfLines={1}>
+                <View className="flex-row items-center justify-between gap-2 min-w-0">
+                  <Text className="font-mono text-xs text-foreground-muted flex-1 min-w-0 break-words" numberOfLines={1}>
                     {item.packageName}
                   </Text>
                   {item.canReply ? (
-                    <Text className="font-mono-bold text-xs text-accent">QUICK REPLY</Text>
+                    <Text className="font-mono-bold text-xs text-accent shrink-0">QUICK REPLY</Text>
                   ) : null}
                 </View>
                 {item.canReply ? (

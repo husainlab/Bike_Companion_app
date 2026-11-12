@@ -39,6 +39,7 @@ export class SqliteStore implements PillionStore {
             theme TEXT NOT NULL,
             keep_awake_on_ride INTEGER NOT NULL,
             auto_start_overlay INTEGER NOT NULL,
+            auto_volume_enabled INTEGER NOT NULL DEFAULT 0,
             onboarding_complete INTEGER NOT NULL
           );
           CREATE TABLE IF NOT EXISTS paired_devices (
@@ -55,14 +56,20 @@ export class SqliteStore implements PillionStore {
             notifications_relayed INTEGER NOT NULL
           );
         `);
+        try {
+          await txn.execAsync(
+            'ALTER TABLE app_settings ADD COLUMN auto_volume_enabled INTEGER NOT NULL DEFAULT 0;'
+          );
+        } catch {}
         await txn.runAsync(
-          `INSERT OR IGNORE INTO app_settings (id, relay_mode, theme, keep_awake_on_ride, auto_start_overlay, onboarding_complete)
-           VALUES (1, ?, ?, ?, ?, ?)`,
+          `INSERT OR IGNORE INTO app_settings (id, relay_mode, theme, keep_awake_on_ride, auto_start_overlay, auto_volume_enabled, onboarding_complete)
+           VALUES (1, ?, ?, ?, ?, ?, ?)`,
           [
             DEFAULT_APP_SETTINGS.relayMode,
             DEFAULT_APP_SETTINGS.theme,
             DEFAULT_APP_SETTINGS.keepAwakeOnRide ? 1 : 0,
             DEFAULT_APP_SETTINGS.autoStartOverlay ? 1 : 0,
+            DEFAULT_APP_SETTINGS.autoVolumeEnabled ? 1 : 0,
             DEFAULT_APP_SETTINGS.onboardingComplete ? 1 : 0,
           ]
         );
@@ -84,6 +91,7 @@ export class SqliteStore implements PillionStore {
       theme: string;
       keep_awake_on_ride: number;
       auto_start_overlay: number;
+      auto_volume_enabled?: number;
       onboarding_complete: number;
     }>('SELECT * FROM app_settings WHERE id = 1');
 
@@ -93,6 +101,7 @@ export class SqliteStore implements PillionStore {
       theme: row.theme === 'light' ? 'light' : 'dark',
       keepAwakeOnRide: row.keep_awake_on_ride === 1,
       autoStartOverlay: row.auto_start_overlay === 1,
+      autoVolumeEnabled: row.auto_volume_enabled === 1,
       onboardingComplete: row.onboarding_complete === 1,
     };
   }
@@ -104,13 +113,14 @@ export class SqliteStore implements PillionStore {
     await db.withExclusiveTransactionAsync(async (txn) => {
       await txn.runAsync(
         `UPDATE app_settings
-         SET relay_mode = ?, theme = ?, keep_awake_on_ride = ?, auto_start_overlay = ?, onboarding_complete = ?
+         SET relay_mode = ?, theme = ?, keep_awake_on_ride = ?, auto_start_overlay = ?, auto_volume_enabled = ?, onboarding_complete = ?
          WHERE id = 1`,
         [
           next.relayMode,
           next.theme,
           next.keepAwakeOnRide ? 1 : 0,
           next.autoStartOverlay ? 1 : 0,
+          next.autoVolumeEnabled ? 1 : 0,
           next.onboardingComplete ? 1 : 0,
         ]
       );

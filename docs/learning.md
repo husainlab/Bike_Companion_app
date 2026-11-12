@@ -20,3 +20,15 @@ By placing those Kotlin classes in `modules/pillion-native/` and declaring their
 - `src/queries/` & `src/actions/`: Read view models (`QueryCtx`) and `zod`-validated mutations that bump `dataChanged()`.
 - `src/screens/useScreen.ts`: Stale-while-revalidate screen cache with `keepEqual` structural sharing and `InteractionManager.runAfterInteractions` cold-render deferral.
 
+## Speed-Sensitive Auto-Volume (Wind Noise Compensation)
+- Uses the handlebar phone's native hardware GPS provider (`LocationManager.GPS_PROVIDER`) to sample speed with zero cellular data requirement.
+- Maps speed into 4 discrete volume brackets: `0` (< 15 km/h), `1` (15–49 km/h), `2` (50–84 km/h), `3` (>= 85 km/h).
+- Employs a 3-second anti-flutter hysteresis timer (`evaluateSpeedVolumeTransition`) so shifting gears or temporary slowing does not cause sudden volume jumping.
+- Automatically pauses during active phone calls so conversational volume remains stable.
+
+## Pocket Phone Guardian & Call Safety
+- `PillionNotificationListener` captures battery level and temperature via `BatteryManager.EXTRA_TEMPERATURE` and broadcasts `BATTERY|<level>|<tempC>` over Bluetooth SPP.
+- `evaluatePocketGuardian` triggers safety alerts for overheating (`>= 45°C`) or critical battery depletion (`<= 8%`).
+- `/call/mute` operates strictly on the pocket phone's `AudioManager.isMicrophoneMute`, ensuring call audio stays on the rider's helmet intercom.
+- On call termination, `isMicrophoneMute` is automatically reset to `false` so future normal phone calls are never left muted.
+

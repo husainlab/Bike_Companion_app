@@ -22,6 +22,7 @@ export interface AppSettings {
   theme: ThemePreference;
   keepAwakeOnRide: boolean;
   autoStartOverlay: boolean;
+  autoVolumeEnabled: boolean;
   onboardingComplete: boolean;
 }
 
@@ -30,6 +31,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   theme: 'dark',
   keepAwakeOnRide: true,
   autoStartOverlay: false,
+  autoVolumeEnabled: false,
   onboardingComplete: false,
 };
 

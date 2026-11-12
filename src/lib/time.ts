@@ -6,6 +6,20 @@ export function formatDurationMs(ms: number): string {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
+export function formatCallElapsed(startedAtMs: number, nowMs: number = Date.now()): string {
+  if (!Number.isFinite(startedAtMs) || startedAtMs <= 0 || nowMs <= startedAtMs) {
+    return '00:00';
+  }
+  const totalSec = Math.floor((nowMs - startedAtMs) / 1000);
+  const hours = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  if (hours > 0) {
+    return `${hours}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 export function formatRelativeTime(timestampMs: number, nowMs: number = Date.now()): string {
   const diffSec = Math.max(0, Math.floor((nowMs - timestampMs) / 1000));
   if (diffSec < 60) return 'just now';

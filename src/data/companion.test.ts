@@ -15,8 +15,12 @@ const mocks = vi.hoisted(() => ({
     progressMs: 0,
     durationMs: 0,
     batteryLevel: -1,
+    batteryTempC: -1,
+    currentSpeedKmh: 0,
     isCallActive: false,
     isCallIncoming: false,
+    isCallMuted: false,
+    callStartedAtMs: 0,
     callerName: '',
     callerNumber: '',
     notifications: [],
@@ -29,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   getPairedDevices: vi.fn(async () => [{ name: 'Pocket Phone', address: 'AA:BB:CC:DD:EE:FF' }]),
   setRelayRole: vi.fn(async () => {}),
   sendCommand: vi.fn(async () => {}),
+  setAutoStartOverlay: vi.fn(async () => {}),
   launchGoogleMaps: vi.fn(async () => true),
   remove: vi.fn(),
   addListener: vi.fn(),
@@ -45,8 +50,12 @@ vi.mock('../../modules/pillion-native', () => ({
     progressMs: 0,
     durationMs: 0,
     batteryLevel: -1,
+    batteryTempC: -1,
+    currentSpeedKmh: 0,
     isCallActive: false,
     isCallIncoming: false,
+    isCallMuted: false,
+    callStartedAtMs: 0,
     callerName: '',
     callerNumber: '',
     notifications: [],
@@ -61,6 +70,7 @@ vi.mock('../../modules/pillion-native', () => ({
     getPairedDevices: mocks.getPairedDevices,
     setRelayRole: mocks.setRelayRole,
     sendCommand: mocks.sendCommand,
+    setAutoStartOverlay: mocks.setAutoStartOverlay,
     launchGoogleMaps: mocks.launchGoogleMaps,
     addListener: mocks.addListener.mockImplementation(() => ({ remove: mocks.remove })),
   },
@@ -73,13 +83,23 @@ import {
   getPairedBluetoothDevices,
   launchLocalGoogleMaps,
   replyToMirroredNotification,
+  sendCockpitCommand,
   setCompanionRelayRole,
+  setNativeAutoStartOverlay,
   subscribeCompanionState,
 } from './companion';
 
 describe('companion native data adapter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('forwards mute command and syncs auto start overlay', async () => {
+    await setNativeAutoStartOverlay(true);
+    expect(mocks.setAutoStartOverlay).toHaveBeenCalledWith(true);
+
+    await sendCockpitCommand('/call/mute');
+    expect(mocks.sendCommand).toHaveBeenCalledWith('/call/mute');
   });
 
   it('forwards commands with trimmed inputs and guards blank numbers/replies', async () => {

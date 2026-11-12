@@ -12,7 +12,8 @@ class PillionProtocolTest {
     assertEquals(PillionPacket.Title("Nightcall"), PillionProtocol.parse("TITLE|Nightcall", false))
     assertEquals(PillionPacket.Artist("Kavinsky"), PillionProtocol.parse("ARTIST|Kavinsky", false))
     assertEquals(PillionPacket.Playing(true), PillionProtocol.parse("PLAYING|1", false))
-    assertEquals(PillionPacket.Battery(84), PillionProtocol.parse("BATTERY|84", false))
+    assertEquals(PillionPacket.Battery(84, -1), PillionProtocol.parse("BATTERY|84", false))
+    assertEquals(PillionPacket.Battery(84, 42), PillionProtocol.parse("BATTERY|84|42", false))
     assertEquals(PillionPacket.Progress(12000L, 258000L), PillionProtocol.parse("PROGRESS|12000|258000", false))
   }
 
@@ -117,11 +118,57 @@ class PillionProtocolTest {
 
     assertFalse(PillionStateStore.isCallActive)
     assertFalse(PillionStateStore.isCallIncoming)
+    assertFalse(PillionStateStore.isCallMuted)
+    assertEquals(0L, PillionStateStore.callStartedAtMs)
     assertFalse(PillionStateStore.isPlaying)
     assertEquals(-1, PillionStateStore.batteryLevel)
     assertEquals("No Media Playing", PillionStateStore.songTitle)
     assertTrue(PillionStateStore.getNotifications().isEmpty())
     assertNull(PillionStateStore.lastNotification)
+  }
+
+  @Test
+  fun parsesCallMuteAndFormatsCallElapsed() {
+    assertEquals(PillionPacket.CallMute(true), PillionProtocol.parse("CALL_MUTE|1", false))
+    assertEquals(PillionPacket.CallMute(false), PillionProtocol.parse("CALL_MUTE|0", false))
+
+    assertEquals("00:00", PillionProtocol.formatCallElapsed(0L, 5000L))
+    assertEquals("00:00", PillionProtocol.formatCallElapsed(5000L, 4000L))
+    assertEquals("00:45", PillionProtocol.formatCallElapsed(1000L, 46_000L))
+    assertEquals("02:05", PillionProtocol.formatCallElapsed(1000L, 126_000L))
+    assertEquals("1:02:05", PillionProtocol.formatCallElapsed(1000L, 3_726_000L))
+  }
+
+  @Test
+  fun tracksCallTimerAndMuteLifecycleAcrossPackets() {
+    PillionStateStore.resetTransientState()
+
+    PillionStateStore.applyPacket("CALL_IN|Maya|+15550000", false, nowMs = 500L)
+    assertTrue(PillionStateStore.isCallActive)
+    assertTrue(PillionStateStore.isCallIncoming)
+    assertFalse(PillionStateStore.isCallMuted)
+    assertEquals(0L, PillionStateStore.callStartedAtMs)
+
+    PillionStateStore.applyPacket("CALL_ACTIVE|Maya|+15550000", false, nowMs = 1000L)
+    assertTrue(PillionStateStore.isCallActive)
+    assertFalse(PillionStateStore.isCallIncoming)
+    assertEquals(1000L, PillionStateStore.callStartedAtMs)
+
+    PillionStateStore.applyPacket("CALL_MUTE|1", false, nowMs = 2000L)
+    assertTrue(PillionStateStore.isCallMuted)
+
+    PillionStateStore.applyPacket("CALL_ACTIVE|Maya|+15550000", false, nowMs = 5000L)
+    assertEquals(1000L, PillionStateStore.callStartedAtMs)
+    assertTrue(PillionStateStore.isCallMuted)
+
+    PillionStateStore.applyPacket("CALL_MUTE|0", false, nowMs = 6000L)
+    assertFalse(PillionStateStore.isCallMuted)
+
+    PillionStateStore.applyPacket("CALL_END", false, nowMs = 7000L)
+    assertFalse(PillionStateStore.isCallActive)
+    assertFalse(PillionStateStore.isCallIncoming)
+    assertFalse(PillionStateStore.isCallMuted)
+    assertEquals(0L, PillionStateStore.callStartedAtMs)
   }
 
   @Test

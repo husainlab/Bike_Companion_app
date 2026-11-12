@@ -10,10 +10,13 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationListener
+import android.location.LocationManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Looper
 import android.provider.CallLog
 import android.provider.ContactsContract
 import android.provider.Settings
@@ -43,6 +46,7 @@ class PillionNativeModule : Module() {
     private val APP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     private const val PREFS_NAME = "pillion_native_prefs"
     private const val PREF_LAST_DEVICE = "last_device"
+    private const val PREF_AUTO_START_OVERLAY = "auto_start_overlay"
     private const val MAX_SYNC_CONTACTS = 250
     private const val MAX_SYNC_RECENTS = 25
   }
@@ -52,6 +56,8 @@ class PillionNativeModule : Module() {
   private var reconnectJob: Job? = null
   @Volatile private var autoReconnectEnabled = false
   @Volatile private var isSenderMode = false
+  @Volatile private var currentGpsSpeedKmh: Double = 0.0
+  private var locationListener: LocationListener? = null
   private val isConnecting = AtomicBoolean(false)
   @Volatile private var serverAcceptJob: Job? = null
   @Volatile private var activeServerSocket: BluetoothServerSocket? = null
@@ -132,6 +138,7 @@ class PillionNativeModule : Module() {
       val roleChanged = isSenderMode != nextSender
       isSenderMode = nextSender
       if (nextSender) {
+        stopGpsSpeedTracking()
         autoReconnectEnabled = false
         reconnectJob?.cancel()
         reconnectJob = null
@@ -140,6 +147,7 @@ class PillionNativeModule : Module() {
           context.stopService(Intent(context, PillionOverlayService::class.java))
         }
       } else {
+        startGpsSpeedTracking()
         if (PillionStateStore.isServerRunning) {
           stopServerInternal()
         } else if (roleChanged) {
@@ -191,6 +199,13 @@ class PillionNativeModule : Module() {
       context.stopService(Intent(context, PillionOverlayService::class.java))
     }
 
+    AsyncFunction("setAutoStartOverlay") { enabled: Boolean ->
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean(PREF_AUTO_START_OVERLAY, enabled)
+        .apply()
+    }
+
     AsyncFunction("sendCommand") { path: String ->
       PillionStateStore.sendMessage(path)
     }
@@ -206,6 +221,37 @@ class PillionNativeModule : Module() {
     AsyncFunction("launchGoogleMaps") { splitScreen: Boolean ->
       launchGoogleMapsInternal(splitScreen)
     }
+  }
+
+  private fun startGpsSpeedTracking() {
+    if (locationListener != null) return
+    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+      ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED
+    ) {
+      return
+    }
+    val listener = LocationListener { location ->
+      val speedKmh = if (location.hasSpeed()) (location.speed * 3.6).toDouble() else 0.0
+      currentGpsSpeedKmh = speedKmh
+      PillionStateStore.notifyChanged()
+    }
+    locationListener = listener
+    try {
+      if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+        lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, listener, Looper.getMainLooper())
+      }
+    } catch (_: Exception) {}
+  }
+
+  private fun stopGpsSpeedTracking() {
+    val listener = locationListener ?: return
+    locationListener = null
+    try {
+      val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+      lm?.removeUpdates(listener)
+    } catch (_: Exception) {}
+    currentGpsSpeedKmh = 0.0
   }
 
   private fun startOverlayForegroundService() {
@@ -450,6 +496,13 @@ class PillionNativeModule : Module() {
         syncContactsAndRecents()
       }
     } else {
+      val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      val autoStartOverlay = prefs.getBoolean(PREF_AUTO_START_OVERLAY, false)
+      if (autoStartOverlay && Settings.canDrawOverlays(context) && !PillionStateStore.isOverlayRunning) {
+        try {
+          startOverlayForegroundService()
+        } catch (_: Exception) {}
+      }
       scope.launch {
         delay(450)
         PillionStateStore.sendMessage("/sync/contacts")
@@ -645,6 +698,29 @@ class PillionNativeModule : Module() {
           if (!ended) {
             PillionStateStore.callActionFallbackHandler?.invoke(false)
           }
+          try {
+            audioManager.isMicrophoneMute = false
+          } catch (_: Exception) {}
+          PillionStateStore.isCallMuted = false
+          PillionStateStore.sendMessage("CALL_MUTE|0")
+        }
+        path == "/call/mute" -> {
+          val nextMuted = !audioManager.isMicrophoneMute
+          try {
+            audioManager.isMicrophoneMute = nextMuted
+          } catch (_: Exception) {}
+          PillionStateStore.isCallMuted = nextMuted
+          PillionStateStore.notifyChanged()
+          PillionStateStore.sendMessage("CALL_MUTE|${if (nextMuted) "1" else "0"}")
+        }
+        path.startsWith("/call/mute|") -> {
+          val nextMuted = path.removePrefix("/call/mute|") == "1"
+          try {
+            audioManager.isMicrophoneMute = nextMuted
+          } catch (_: Exception) {}
+          PillionStateStore.isCallMuted = nextMuted
+          PillionStateStore.notifyChanged()
+          PillionStateStore.sendMessage("CALL_MUTE|${if (nextMuted) "1" else "0"}")
         }
         path.startsWith("/call/dial|") -> {
           val number = path.removePrefix("/call/dial|")
@@ -698,8 +774,12 @@ class PillionNativeModule : Module() {
     "progressMs" to PillionStateStore.progressMs.toDouble(),
     "durationMs" to PillionStateStore.durationMs.toDouble(),
     "batteryLevel" to PillionStateStore.batteryLevel,
+    "batteryTempC" to PillionStateStore.batteryTempC,
+    "currentSpeedKmh" to currentGpsSpeedKmh,
     "isCallActive" to PillionStateStore.isCallActive,
     "isCallIncoming" to PillionStateStore.isCallIncoming,
+    "isCallMuted" to PillionStateStore.isCallMuted,
+    "callStartedAtMs" to PillionStateStore.callStartedAtMs.toDouble(),
     "callerName" to PillionStateStore.callerName,
     "callerNumber" to PillionStateStore.callerNumber,
     "notifications" to PillionStateStore.getNotifications().map {

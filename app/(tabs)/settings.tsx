@@ -3,11 +3,20 @@ import { Switch, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   setAutoStartOverlay,
+  setAutoVolumeEnabled,
   setKeepAwakeOnRide,
   setThemePreference,
 } from '@/actions/cockpit';
-import { openNotificationAccessSettings, openOverlayPermissionSettings } from '@/data/companion';
+import {
+  openNotificationAccessSettings,
+  openOverlayPermissionSettings,
+  setNativeAutoStartOverlay,
+} from '@/data/companion';
 import { getStore, useAppState } from '@/state/app';
+import {
+  setCompanionAutoStartOverlay,
+  setCompanionAutoVolumeEnabled,
+} from '@/state/companion';
 import { checkForAppUpdate, getUpdate, setUpdateCheck, useUpdate } from '@/state/update';
 import { Button } from '@/ui/Button';
 import { Card } from '@/ui/Card';
@@ -85,7 +94,29 @@ export default function SettingsScreen() {
             <Switch
               value={settings.autoStartOverlay}
               onValueChange={(v) => {
+                setCompanionAutoStartOverlay(v);
+                setNativeAutoStartOverlay(v).catch(() => {});
                 void setAutoStartOverlay(getStore(), v);
+              }}
+              trackColor={{ false: palette.border, true: palette.primary }}
+              thumbColor={palette.foreground}
+            />
+          </View>
+
+          <View className="flex-row items-center justify-between pt-3 border-t border-border">
+            <View className="flex-1 pr-3">
+              <Text className="font-bold text-base text-foreground">
+                Speed-sensitive auto volume
+              </Text>
+              <Text className="text-xs text-foreground-muted">
+                Compensates for helmet wind noise at highway speeds
+              </Text>
+            </View>
+            <Switch
+              value={settings.autoVolumeEnabled}
+              onValueChange={(v) => {
+                setCompanionAutoVolumeEnabled(v);
+                void setAutoVolumeEnabled(getStore(), v);
               }}
               trackColor={{ false: palette.border, true: palette.primary }}
               thumbColor={palette.foreground}

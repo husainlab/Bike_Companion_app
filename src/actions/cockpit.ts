@@ -63,6 +63,14 @@ export async function setAutoStartOverlay(
   return patchSettings(store, { autoStartOverlay: parsed });
 }
 
+export async function setAutoVolumeEnabled(
+  store: PillionStore,
+  autoVolumeEnabled: boolean
+): Promise<AppSettings> {
+  const parsed = z.boolean().parse(autoVolumeEnabled);
+  return patchSettings(store, { autoVolumeEnabled: parsed });
+}
+
 export async function completeOnboarding(
   store: PillionStore,
   initialMode?: RelayMode

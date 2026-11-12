@@ -20,6 +20,10 @@ import {
   endActiveRideSession,
   incrementActiveRideNotifications,
 } from '@/actions/cockpit';
+import {
+  setNativeAutoStartOverlay,
+  startCockpitOverlay,
+} from '@/data/companion';
 import { ScreenError } from '@/screens/ScreenError';
 import { bootApp, getStore, useAppState } from '@/state/app';
 import {
@@ -65,8 +69,16 @@ export default function RootLayout() {
           onDisconnected: () => {
             endActiveRideSession(getStore()).catch(() => {});
           },
+          onAutoStartOverlay: () => {
+            startCockpitOverlay().catch(() => {});
+          },
         });
-        initCompanionBridge(appState.settings.relayMode).catch(() => {});
+        setNativeAutoStartOverlay(appState.settings.autoStartOverlay).catch(() => {});
+        initCompanionBridge(
+          appState.settings.relayMode,
+          appState.settings.autoStartOverlay,
+          appState.settings.autoVolumeEnabled
+        ).catch(() => {});
         maybeCheckForAppUpdate().catch(() => {});
       })
       .catch(() => {

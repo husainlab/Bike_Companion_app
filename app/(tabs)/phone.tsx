@@ -7,13 +7,13 @@ import {
 } from '@/core/cockpit';
 import {
   dialContactNumber,
-  sendCockpitCommand,
   syncCompanionContacts,
 } from '@/data/companion';
 import { formatRelativeTime } from '@/lib/time';
 import { useAppState } from '@/state/app';
 import { useCompanionState } from '@/state/companion';
 import { Button } from '@/ui/Button';
+import { CallHudCard } from '@/ui/CallHudCard';
 import { Card } from '@/ui/Card';
 import { Icon, type PillionIconName } from '@/ui/Icon';
 import { getPalette } from '@/ui/palette';
@@ -98,42 +98,7 @@ export default function PhoneScreen() {
       }
     >
       <ScreenScroll>
-        {companion.isCallActive ? (
-          <Card tone="alert" className="gap-3">
-            <View className="flex-row items-center gap-2">
-              <Icon name="phoneCall" size={20} color={palette.danger} />
-              <Text className="font-mono-bold text-xs uppercase tracking-widest text-danger">
-                {companion.isCallIncoming ? 'INCOMING CALL' : 'ACTIVE CALL ON POCKET PHONE'}
-              </Text>
-            </View>
-            <Text className="font-bold text-2xl text-foreground" numberOfLines={1}>
-              {companion.callerName || companion.callerNumber || 'Unknown Caller'}
-            </Text>
-            {companion.callerNumber && companion.callerName !== companion.callerNumber ? (
-              <Text className="font-mono text-sm text-foreground-muted" numberOfLines={1}>
-                {companion.callerNumber}
-              </Text>
-            ) : null}
-            <View className="flex-row gap-3">
-              <Button
-                label={companion.isCallIncoming ? 'Decline' : 'End Call'}
-                icon="phoneOff"
-                tone="danger"
-                onPress={() => sendCockpitCommand('/call/decline')}
-                className="flex-1"
-              />
-              {companion.isCallIncoming ? (
-                <Button
-                  label="Answer"
-                  icon="phoneIncoming"
-                  tone="accent"
-                  onPress={() => sendCockpitCommand('/call/answer')}
-                  className="flex-1"
-                />
-              ) : null}
-            </View>
-          </Card>
-        ) : null}
+        <CallHudCard companion={companion} />
 
         <Card tone="muted" className="flex-row items-center justify-between gap-3 py-3">
           <View className="flex-1 gap-0.5">
@@ -207,20 +172,20 @@ export default function PhoneScreen() {
                   haptic="confirm"
                   className="flex-row items-center justify-between gap-3 rounded-md border-[1.5px] border-border bg-surface px-4 py-3.5"
                 >
-                  <View className="flex-1 gap-0.5">
+                  <View className="flex-1 min-w-0 gap-0.5">
                     <View className="flex-row items-center gap-1.5">
                       {contact.isStarred ? (
                         <Icon name="star" size={14} color={palette.primary} />
                       ) : null}
-                      <Text className="font-bold text-base text-foreground flex-1" numberOfLines={1}>
+                      <Text className="font-bold text-base text-foreground flex-1 min-w-0 break-words" numberOfLines={1}>
                         {contact.name}
                       </Text>
                     </View>
-                    <Text className="font-mono text-xs text-foreground-muted" numberOfLines={1}>
+                    <Text className="font-mono text-xs text-foreground-muted break-words" numberOfLines={1}>
                       {contact.phoneNumber}
                     </Text>
                   </View>
-                  <View className="h-11 w-11 items-center justify-center rounded-sm border-[1.5px] border-accent bg-accent">
+                  <View className="h-11 w-11 shrink-0 items-center justify-center rounded-sm border-[1.5px] border-accent bg-accent">
                     <Icon name="phoneCall" size={20} color={palette.onPrimary} />
                   </View>
                 </Press>
@@ -263,16 +228,16 @@ export default function PhoneScreen() {
                       size={20}
                       color={isMissed ? palette.danger : palette.accent}
                     />
-                    <View className="flex-1 gap-0.5">
-                      <Text className="font-bold text-base text-foreground" numberOfLines={1}>
+                    <View className="flex-1 min-w-0 gap-0.5">
+                      <Text className="font-bold text-base text-foreground break-words" numberOfLines={1}>
                         {entry.name || entry.phoneNumber}
                       </Text>
-                      <Text className="font-mono text-xs text-foreground-muted" numberOfLines={1}>
+                      <Text className="font-mono text-xs text-foreground-muted break-words" numberOfLines={1}>
                         {formatCallTypeLabel(entry.callType)} • {entry.phoneNumber} •{' '}
                         {entry.timestampMs > 0 ? formatRelativeTime(entry.timestampMs) : 'recent'}
                       </Text>
                     </View>
-                    <View className="h-11 w-11 items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted">
+                    <View className="h-11 w-11 shrink-0 items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted">
                       <Icon name="phoneCall" size={18} color={palette.accent} />
                     </View>
                   </Press>

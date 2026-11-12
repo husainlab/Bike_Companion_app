@@ -32,9 +32,10 @@ sealed class PillionPacket {
   data class Artist(val value: String) : PillionPacket()
   data class Playing(val isPlaying: Boolean) : PillionPacket()
   data class Progress(val positionMs: Long, val durationMs: Long) : PillionPacket()
-  data class Battery(val level: Int) : PillionPacket()
+  data class Battery(val level: Int, val tempC: Int = -1) : PillionPacket()
   data class CallIncoming(val caller: String, val phoneNumber: String = "") : PillionPacket()
   data class CallActive(val caller: String = "", val phoneNumber: String = "") : PillionPacket()
+  data class CallMute(val isMuted: Boolean) : PillionPacket()
   data object CallEnd : PillionPacket()
   data class NotificationAdd(val notification: MirrorNotification) : PillionPacket()
   data class NotificationRemove(val key: String) : PillionPacket()
@@ -103,6 +104,19 @@ object PillionProtocol {
   fun clampOverlayCoord(value: Int, maxAllowed: Int): Int =
     value.coerceIn(0, maxAllowed.coerceAtLeast(0))
 
+  fun formatCallElapsed(startedAtMs: Long, nowMs: Long = System.currentTimeMillis()): String {
+    if (startedAtMs <= 0L || nowMs <= startedAtMs) return "00:00"
+    val totalSec = (nowMs - startedAtMs) / 1000L
+    val hours = totalSec / 3600L
+    val mins = (totalSec % 3600L) / 60L
+    val secs = totalSec % 60L
+    return if (hours > 0L) {
+      "%d:%02d:%02d".format(hours, mins, secs)
+    } else {
+      "%02d:%02d".format(mins, secs)
+    }
+  }
+
   fun parse(line: String, isSender: Boolean): PillionPacket? {
     val trimmed = line.trim()
     if (trimmed.isEmpty()) return null
@@ -115,6 +129,7 @@ object PillionProtocol {
 
     return when (parts[0]) {
       "CALL_END" -> PillionPacket.CallEnd
+      "CALL_MUTE" -> parts.getOrNull(1)?.let { PillionPacket.CallMute(it == "1") }
       "CALL_ACTIVE" -> PillionPacket.CallActive(
         caller = parts.getOrNull(1) ?: "",
         phoneNumber = parts.getOrNull(2) ?: ""
@@ -122,7 +137,12 @@ object PillionProtocol {
       "TITLE" -> parts.getOrNull(1)?.let { PillionPacket.Title(it) }
       "ARTIST" -> parts.getOrNull(1)?.let { PillionPacket.Artist(it) }
       "PLAYING" -> parts.getOrNull(1)?.let { PillionPacket.Playing(it == "1") }
-      "BATTERY" -> parts.getOrNull(1)?.toIntOrNull()?.let { PillionPacket.Battery(it) }
+      "BATTERY" -> {
+        parts.getOrNull(1)?.toIntOrNull()?.let { level ->
+          val temp = parts.getOrNull(2)?.toIntOrNull() ?: -1
+          PillionPacket.Battery(level, temp)
+        }
+      }
       "CALL_IN" -> parts.getOrNull(1)?.let {
         PillionPacket.CallIncoming(
           caller = it,
@@ -219,8 +239,11 @@ object PillionStateStore {
   @Volatile var progressMs: Long = 0L
   @Volatile var durationMs: Long = 0L
   @Volatile var batteryLevel: Int = -1
+  @Volatile var batteryTempC: Int = -1
   @Volatile var isCallActive: Boolean = false
   @Volatile var isCallIncoming: Boolean = false
+  @Volatile var isCallMuted: Boolean = false
+  @Volatile var callStartedAtMs: Long = 0L
   @Volatile var callerName: String = ""
   @Volatile var callerNumber: String = ""
   @Volatile var lastNotification: MirrorNotification? = null
@@ -351,8 +374,11 @@ object PillionStateStore {
     progressMs = 0L
     durationMs = 0L
     batteryLevel = -1
+    batteryTempC = -1
     isCallActive = false
     isCallIncoming = false
+    isCallMuted = false
+    callStartedAtMs = 0L
     callerName = ""
     callerNumber = ""
     lastNotification = null
@@ -362,7 +388,7 @@ object PillionStateStore {
     }
   }
 
-  fun applyPacket(line: String, isSender: Boolean) {
+  fun applyPacket(line: String, isSender: Boolean, nowMs: Long = System.currentTimeMillis()) {
     val packet = PillionProtocol.parse(line, isSender) ?: return
     when (packet) {
       is PillionPacket.Command -> {
@@ -376,22 +402,36 @@ object PillionStateStore {
         progressMs = packet.positionMs
         durationMs = packet.durationMs
       }
-      is PillionPacket.Battery -> batteryLevel = packet.level
+      is PillionPacket.Battery -> {
+        batteryLevel = packet.level
+        batteryTempC = packet.tempC
+      }
       is PillionPacket.CallIncoming -> {
         isCallActive = true
         isCallIncoming = true
+        isCallMuted = false
+        callStartedAtMs = 0L
         callerName = packet.caller
         callerNumber = packet.phoneNumber
       }
       is PillionPacket.CallActive -> {
+        val enteringActive = !isCallActive || isCallIncoming || callStartedAtMs <= 0L
         isCallActive = true
         isCallIncoming = false
+        if (enteringActive) {
+          callStartedAtMs = nowMs
+        }
         if (packet.caller.isNotEmpty()) callerName = packet.caller
         if (packet.phoneNumber.isNotEmpty()) callerNumber = packet.phoneNumber
+      }
+      is PillionPacket.CallMute -> {
+        isCallMuted = packet.isMuted
       }
       PillionPacket.CallEnd -> {
         isCallActive = false
         isCallIncoming = false
+        isCallMuted = false
+        callStartedAtMs = 0L
         callerName = ""
         callerNumber = ""
       }

@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
@@ -89,8 +90,12 @@ class PillionNotificationListener : NotificationListenerService() {
   private val batteryReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
       val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+      val tempRaw = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+      val tempC = if (tempRaw > 0) tempRaw / 10 else -1
       if (level != -1) {
-        PillionStateStore.sendMessage("BATTERY|$level")
+        PillionStateStore.batteryLevel = level
+        PillionStateStore.batteryTempC = tempC
+        PillionStateStore.sendMessage("BATTERY|$level|$tempC")
       }
     }
   }
@@ -131,8 +136,12 @@ class PillionNotificationListener : NotificationListenerService() {
 
     val batteryStatus = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
     val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+    val tempRaw = batteryStatus?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+    val tempC = if (tempRaw > 0) tempRaw / 10 else -1
     if (level != -1) {
-      PillionStateStore.sendMessage("BATTERY|$level")
+      PillionStateStore.batteryLevel = level
+      PillionStateStore.batteryTempC = tempC
+      PillionStateStore.sendMessage("BATTERY|$level|$tempC")
     }
 
     val componentName = ComponentName(this, this::class.java)
@@ -363,12 +372,23 @@ class PillionNotificationListener : NotificationListenerService() {
     lastCallerNumber = ""
     activeCallAnswerAction = null
     activeCallDeclineAction = null
+    try {
+      (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.isMicrophoneMute = false
+    } catch (_: Exception) {}
+    PillionStateStore.isCallMuted = false
+    PillionStateStore.sendMessage("CALL_MUTE|0")
     emitCallPacket("CALL_END")
   }
 
   private fun emitCallOffhook() {
     val name = lastCallerName.ifEmpty { "Active Call" }
     emitCallPacket("CALL_ACTIVE|$name|$lastCallerNumber")
+    try {
+      val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+      val isMuted = audioManager?.isMicrophoneMute == true
+      PillionStateStore.isCallMuted = isMuted
+      PillionStateStore.sendMessage("CALL_MUTE|${if (isMuted) "1" else "0"}")
+    } catch (_: Exception) {}
   }
 
   private fun handleCallState(state: Int, phoneNumber: String?) {

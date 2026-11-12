@@ -10,6 +10,7 @@ import {
   incrementActiveRideNotifications,
   logRideSession,
   recordConnectedDevice,
+  setAutoVolumeEnabled,
   setRelayMode,
   setThemePreference,
   startRideSession,
@@ -25,6 +26,7 @@ describe('cockpit actions and queries with MemoryStore', () => {
 
     await setRelayMode(store, 'receiver');
     await setThemePreference(store, 'dark');
+    await setAutoVolumeEnabled(store, true);
     await recordConnectedDevice(store, { address: 'AA:BB:CC:DD:EE:FF', name: 'Pixel Pocket' }, 1000);
     await logRideSession(store, {
       id: 'ride-1',
@@ -39,6 +41,7 @@ describe('cockpit actions and queries with MemoryStore', () => {
     expect(vm.settings.onboardingComplete).toBe(true);
     expect(vm.settings.relayMode).toBe('receiver');
     expect(vm.settings.theme).toBe('dark');
+    expect(vm.settings.autoVolumeEnabled).toBe(true);
     expect(vm.recentDevices).toHaveLength(1);
     expect(vm.recentRides).toHaveLength(1);
 
