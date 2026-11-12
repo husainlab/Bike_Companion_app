@@ -2,7 +2,7 @@
   "expo": {
     "name": "Pillion",
     "slug": "pillion",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "default",
     "platforms": [
       "android"
@@ -14,7 +14,7 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.husainlab.pillion",
-      "versionCode": 4,
+      "versionCode": 5,
       "predictiveBackGestureEnabled": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
