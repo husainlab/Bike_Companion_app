@@ -1,0 +1,35 @@
+name: Bug Report
+description: Report a crash, Bluetooth SPP issue, overlay problem, or updater bug in Pillion
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: input
+    id: app_version
+    attributes:
+      label: App Version
+      placeholder: e.g. 1.0.1
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Device Role
+      options:
+        - Handlebar Display (Receiver)
+        - Pocket Relay (Sender)
+        - Both / Pairing
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      placeholder: 1. Pair phones... 2. Open Pillion...
+    validations:
+      required: true
+  - type: textarea
+    id: device_info
+    attributes:
+      label: Android Device & OS Version
+      placeholder: e.g. Pixel 7 (Android 16) + Moto G (Android 13)
+

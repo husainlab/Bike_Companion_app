@@ -1,18 +1,28 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-/.idea/deploymentTargetSelector.xml
-/.idea/runConfigurations.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
-local.properties
+# Dependencies
+node_modules/
+
+# Expo / CNG generated native directories
+/android
+/ios
+.expo/
+dist/
+web-build/
+expo-env.d.ts
 .kotlin/
+*.orig.*
+.vitest/
+*.db
+modules/*/android/build/
+
+# Release keystores (public repo — store in GitHub Secrets)
+credentials/*.keystore
+credentials/*.jks
+
+# Local / OS / TypeScript
+.DS_Store
+*.tsbuildinfo
+.env*.local
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+pnpm-debug.*

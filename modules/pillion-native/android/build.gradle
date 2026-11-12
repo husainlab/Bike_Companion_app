@@ -1,0 +1,25 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.husainlab.pillion'
+version = '1.0.0'
+
+android {
+  namespace "com.husainlab.pillion.nativecore"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+  testOptions {
+    unitTests.returnDefaultValues = true
+  }
+}
+
+dependencies {
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0"
+  implementation "androidx.core:core-ktx:1.15.0"
+  testImplementation "junit:junit:4.13.2"
+}
+

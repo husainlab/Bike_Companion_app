@@ -1,0 +1,11 @@
+# npm/pnpm packages are intentionally excluded: Expo native packages must remain
+# pinned to the active Expo SDK (SDK 58) and should be upgraded exclusively via:
+#   npx expo install --fix
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+

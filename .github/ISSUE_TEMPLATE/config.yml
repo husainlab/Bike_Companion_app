@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Releases & APKs
+    url: https://github.com/husainlab/Bike_Companion_app/releases
+    about: Download signed release APKs or inspect release notes
+

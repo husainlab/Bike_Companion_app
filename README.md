@@ -1,36 +1,29 @@
-# Companion App 🚲
+# Pillion
 
-A simple way to mirror your phone's notifications, music, and calls onto a second Android device. Perfect for using a spare phone or tablet as a dedicated dashboard for your bike or car.
+[![Latest Release](https://img.shields.io/github/v/release/husainlab/Bike_Companion_app?label=Release&color=FF5A1F)](https://github.com/husainlab/Bike_Companion_app/releases)
 
-## 📥 Download
-[**Download the latest APK here**](https://github.com/husainlab/Bike_Companion_app/raw/main/CompanionApp.apk)
+A two-phone Android riding cockpit. Keep your primary phone in your jacket pocket and mount a spare Android phone on your handlebars to mirror music controls, notifications, incoming calls, and pocket battery over Bluetooth.
 
----
+## Download
 
-## 🚀 How to Use
+[**Download latest signed APK (`Pillion-release.apk`)**](https://github.com/husainlab/Bike_Companion_app/raw/main/Pillion-release.apk)
 
-### 1. Preparation
-*   **Two Devices**: You need two Android phones (or a phone and a tablet).
-*   **Bluetooth Pairing**: Go to your Android system settings and pair both devices via Bluetooth before opening the app.
+All versioned releases and changelogs are published on [GitHub Releases](https://github.com/husainlab/Bike_Companion_app/releases), and installed builds can update directly inside **Setup → Check for updates**.
 
-### 2. Setup the "Sender" (Your Main Phone)
-This is the phone you will keep in your pocket. It sends music and notification data.
-1.  Open the app and select **Sender Mode**.
-2.  Tap **Start Server**.
-3.  When prompted, grant **Notification Access** so the app can see your incoming alerts.
+## How It Works
 
-### 3. Setup the "Receiver" (The Display Device)
-This is the device you mount on your bike or dashboard.
-1.  Open the app and select **Receiver Mode**.
-2.  Tap **Connect to Sender** and select your main phone from the list.
-3.  Tap **Start Overlay Widget**. A floating bubble will appear that you can drag anywhere.
-4.  **Tip**: Tap the bubble to expand it and control your music or view notifications!
+1. **Pair Both Phones**: Bond your pocket phone and handlebar phone in Android system Bluetooth settings.
+2. **Pocket Phone (`Pocket Sender`)**: Switch to **Pocket Sender**, grant Bluetooth/Phone permissions, enable **Notification Access**, and tap **Start Relay Server**.
+3. **Handlebar Phone (`Handlebar`)**: Keep on **Handlebar** mode, tap **Connect Paired Phone**, pick your pocket phone, and optionally tap **Launch Floating Overlay** for a draggable cockpit bubble over navigation apps.
 
----
+## Development
 
-## 🛠 Required Permissions
-To work correctly, the app will ask for:
-*   **Bluetooth**: To connect the two devices.
-*   **Notifications**: So the Sender can "read" your alerts to show them on the other screen.
-*   **Display Over Apps**: So the Receiver can show the floating control bubble.
-*   **Phone/Contacts**: To show you who is calling on the dashboard.
+```bash
+pnpm install
+pnpm typecheck
+pnpm lint
+pnpm test
+npx expo export --platform android --output-dir /tmp/bundle-check
+```
+
+See [docs/releases.md](./docs/releases.md) for CI workflows, APK signing fallback, and release publishing details.

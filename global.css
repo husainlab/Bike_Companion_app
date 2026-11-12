@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-background: 245 243 238;
+  --color-surface: 255 255 255;
+  --color-surface-muted: 232 228 218;
+  --color-foreground: 23 25 22;
+  --color-foreground-muted: 89 93 85;
+  --color-primary: 217 78 31;
+  --color-on-primary: 255 251 247;
+  --color-accent: 30 91 69;
+  --color-on-accent: 255 255 255;
+  --color-border: 209 204 192;
+  --color-danger: 179 38 30;
+  --color-warning: 180 83 9;
+  --color-scrim: rgb(23 25 22 / 0.55);
+  --color-edge: rgb(23 25 22 / 0.14);
+}
+
+.dark:root {
+  --color-background: 0 0 0;
+  --color-surface: 10 11 10;
+  --color-surface-muted: 20 22 20;
+  --color-foreground: 255 255 255;
+  --color-foreground-muted: 181 186 179;
+  --color-primary: 255 90 31;
+  --color-on-primary: 0 0 0;
+  --color-accent: 0 224 150;
+  --color-on-accent: 0 0 0;
+  --color-border: 36 40 36;
+  --color-danger: 255 69 58;
+  --color-warning: 255 179 64;
+  --color-scrim: rgb(0 0 0 / 0.78);
+  --color-edge: rgb(255 255 255 / 0.14);
+}
+

@@ -1,0 +1,149 @@
+name: Build & Release Signed APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk-release
+  cancel-in-progress: false
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo docker system prune -af || true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Auto-bump version and versionCode
+        id: bump
+        run: node scripts/bump-version.mjs
+
+      - name: Generate expo-env.d.ts and prebuild Android
+        run: |
+          echo '/// <reference types="expo/types" />' > expo-env.d.ts
+          npx expo prebuild --platform android --clean
+
+      - name: Build release APK
+        working-directory: android
+        env:
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+          GRADLE_OPTS: -Xmx4096m -XX:MaxMetaspaceSize=1024m -Dorg.gradle.jvmargs=-Xmx4096m -Dorg.gradle.workers.max=2 -Dorg.gradle.parallel=true
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
+
+      - name: Verify APK signature and stage artifact
+        id: apk
+        run: |
+          APK_FILE=$(find android/app/build/outputs/apk/release -name "*.apk" ! -name "*unsigned*" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            echo "::error::No signed release APK found."
+            exit 1
+          fi
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK_FILE"
+          OUT_APK="android/app/build/outputs/apk/release/Pillion-${{ steps.bump.outputs.new_version }}.apk"
+          if [ "$APK_FILE" != "$OUT_APK" ]; then
+            cp "$APK_FILE" "$OUT_APK"
+          fi
+          echo "apk_path=$OUT_APK" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pillion-${{ steps.bump.outputs.new_version }}
+          path: ${{ steps.apk.outputs.apk_path }}
+
+      - name: Push version bump and root APK safely
+        id: push_release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BUILT_APK="${{ github.workspace }}/${{ steps.apk.outputs.apk_path }}"
+          cp "$BUILT_APK" /tmp/built-pillion.apk
+
+          FINAL_VER=""
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git checkout -B main origin/main
+            git reset --hard origin/main
+
+            FINAL_VER=$(node -e "import('./scripts/bump-version.mjs').then(m => console.log(m.bumpProjectVersions().newVersion))")
+
+            git rm -f Pillion-*.apk CompanionApp.apk 2>/dev/null || true
+            cp /tmp/built-pillion.apk "./Pillion-${FINAL_VER}.apk"
+            cp /tmp/built-pillion.apk "./Pillion-release.apk"
+
+            git add -f "Pillion-${FINAL_VER}.apk" "Pillion-release.apk" app.json package.json
+            git commit -m "chore(release): bump version to ${FINAL_VER} and update APK [skip ci]"
+
+            if git push origin main; then
+              echo "release_ver=${FINAL_VER}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Push attempt ${attempt} failed; retrying in 5s..."
+            sleep 5
+          done
+
+          echo "::error::Failed to push release commit after 5 attempts."
+          exit 1
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_VER="${{ steps.push_release.outputs.release_ver }}"
+          TAG="v${RELEASE_VER}"
+          git tag -f "$TAG"
+          git push -f origin "$TAG"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              "Pillion-${RELEASE_VER}.apk" \
+              "Pillion-release.apk" \
+              --clobber
+          else
+            gh release create "$TAG" \
+              "Pillion-${RELEASE_VER}.apk" \
+              "Pillion-release.apk" \
+              --title "Pillion ${RELEASE_VER}" \
+              --notes "Production signed APK for Pillion ${RELEASE_VER}"
+          fi
+
