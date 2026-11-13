@@ -203,6 +203,13 @@ export default function CockpitScreen() {
             <CallHudCard companion={companion} />
             <PocketGuardianCard companion={companion} />
 
+            <VolumeHudCard
+              visible={volumeHud.visible}
+              percent={volumeHud.percent}
+              isAuto={volumeHud.isAuto}
+              speedKmh={companion.currentSpeedKmh}
+            />
+
             <View className={isWide ? 'flex-row items-start gap-4' : 'gap-4'}>
               {/* Asymmetric sunlight-readable Media Deck */}
               <Card className={isWide ? 'flex-1 gap-4' : 'gap-4'}>
@@ -287,13 +294,6 @@ export default function CockpitScreen() {
                     <Icon name="skipForward" size={24} color={palette.foreground} />
                   </Press>
                 </View>
-
-                <VolumeHudCard
-                  visible={volumeHud.visible}
-                  percent={volumeHud.percent}
-                  isAuto={volumeHud.isAuto}
-                  speedKmh={companion.currentSpeedKmh}
-                />
 
                 <View className="flex-row gap-2.5">
                   <Button

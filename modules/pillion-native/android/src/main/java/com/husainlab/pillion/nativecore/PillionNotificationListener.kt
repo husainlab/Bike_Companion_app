@@ -42,6 +42,7 @@ class PillionNotificationListener : NotificationListenerService() {
   @Volatile private var activeCallDeclineAction: Notification.Action? = null
   @Volatile private var lastCallerName: String = ""
   @Volatile private var lastCallerNumber: String = ""
+  @Volatile private var wasRinging = false
 
   private var lastTitle = ""
   private var lastArtist = ""
@@ -371,6 +372,7 @@ class PillionNotificationListener : NotificationListenerService() {
   }
 
   private fun emitCallRinging(phoneNumber: String?) {
+    wasRinging = true
     if (!phoneNumber.isNullOrEmpty()) {
       lastCallerNumber = PillionProtocol.sanitizeField(phoneNumber)
       lastCallerName = PillionProtocol.sanitizeField(getContactName(phoneNumber))
@@ -380,6 +382,10 @@ class PillionNotificationListener : NotificationListenerService() {
   }
 
   private fun emitCallEnded() {
+    if (wasRinging) {
+      PillionStateStore.sendMessage("CALL_MISSED")
+      wasRinging = false
+    }
     lastCallerName = ""
     lastCallerNumber = ""
     activeCallAnswerAction = null
@@ -393,6 +399,7 @@ class PillionNotificationListener : NotificationListenerService() {
   }
 
   private fun emitCallOffhook() {
+    wasRinging = false
     val name = lastCallerName.ifEmpty { "Active Call" }
     emitCallPacket("CALL_ACTIVE|$name|$lastCallerNumber")
     try {
@@ -458,6 +465,11 @@ class PillionNotificationListener : NotificationListenerService() {
         currentCallActive = lastSentCallKey.startsWith("CALL_ACTIVE|"),
         currentCallIncoming = lastSentCallKey.startsWith("CALL_IN|")
       )
+      if (packetType == "CALL_IN") {
+        wasRinging = true
+      } else if (packetType == "CALL_ACTIVE") {
+        wasRinging = false
+      }
       emitCallPacket("$packetType|$callerTitle|$lastCallerNumber")
       return
     }
@@ -491,6 +503,10 @@ class PillionNotificationListener : NotificationListenerService() {
     if (sbn.notification.category == Notification.CATEGORY_CALL) {
       activeCallAnswerAction = null
       activeCallDeclineAction = null
+      if (wasRinging) {
+        PillionStateStore.sendMessage("CALL_MISSED")
+        wasRinging = false
+      }
       emitCallPacket("CALL_END")
     }
   }

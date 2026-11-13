@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { TextInput, View } from 'react-native';
 import {
   filterContacts,
@@ -11,7 +11,7 @@ import {
 } from '@/data/companion';
 import { formatRelativeTime } from '@/lib/time';
 import { useAppState } from '@/state/app';
-import { useCompanionState } from '@/state/companion';
+import { clearCompanionMissedCalls, useCompanionState } from '@/state/companion';
 import { Button } from '@/ui/Button';
 import { CallHudCard } from '@/ui/CallHudCard';
 import { Card } from '@/ui/Card';
@@ -50,10 +50,13 @@ export default function PhoneScreen() {
   const [dialInput, setDialInput] = useState('');
   const [syncing, setSyncing] = useState(false);
 
-  const missedCallsCount = useMemo(
-    () => companion.recentCalls.filter((c) => c.callType === 3).length,
-    [companion.recentCalls]
-  );
+  const missedCallsCount = companion.sessionMissedCalls;
+
+  useEffect(() => {
+    if (companion.sessionMissedCalls > 0) {
+      void clearCompanionMissedCalls();
+    }
+  }, [companion.sessionMissedCalls]);
 
   const filteredContacts = useMemo(
     () => filterContacts<ContactItem>(companion.contacts, searchQuery),

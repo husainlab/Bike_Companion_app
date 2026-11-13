@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { EMPTY_SNAPSHOT, type CompanionSnapshot } from '../../modules/pillion-native';
 import {
+  clearSessionMissedCalls,
   disconnectCompanion,
   getCompanionSnapshot,
   sendCockpitCommand,
@@ -294,5 +295,14 @@ export async function refreshCompanionSnapshot(): Promise<CompanionSnapshot> {
   snapshot = await getCompanionSnapshot();
   emit();
   return snapshot;
+}
+
+export async function clearCompanionMissedCalls(): Promise<void> {
+  snapshot = {
+    ...snapshot,
+    sessionMissedCalls: 0,
+  };
+  emit();
+  await clearSessionMissedCalls().catch(() => {});
 }
 

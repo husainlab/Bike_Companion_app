@@ -20,6 +20,7 @@ vi.mock('../../modules/pillion-native', () => ({
     callStartedAtMs: 0,
     callerName: '',
     callerNumber: '',
+    sessionMissedCalls: 0,
     notifications: [],
     contacts: [],
     recentCalls: [],
@@ -35,6 +36,7 @@ vi.mock('react-native', () => ({
 }));
 
 import {
+  clearCompanionMissedCalls,
   getVolumeHudState,
   hideVolumeHud,
   initCompanionBridge,
@@ -68,6 +70,7 @@ const mocks = vi.hoisted(() => ({
     callStartedAtMs: 0,
     callerName: '',
     callerNumber: '',
+    sessionMissedCalls: 0,
     notifications: [] as MirrorNotification[],
     contacts: [],
     recentCalls: [],
@@ -80,7 +83,7 @@ const mocks = vi.hoisted(() => ({
   setAutoReconnect: vi.fn(async () => {}),
   stopServer: vi.fn(async () => {}),
   disconnect: vi.fn(async () => {}),
-  sendCommand: vi.fn(async () => {}),
+  sendCommand: vi.fn(async (_path: string) => {}),
 }));
 
 vi.mock('@/data/companion', () => ({
@@ -90,6 +93,9 @@ vi.mock('@/data/companion', () => ({
   stopSenderServer: mocks.stopServer,
   disconnectCompanion: mocks.disconnect,
   sendCockpitCommand: mocks.sendCommand,
+  clearSessionMissedCalls: vi.fn(async () => {
+    await mocks.sendCommand('/call/clear_missed');
+  }),
   subscribeCompanionState: (cb: (s: CompanionSnapshot) => void) => {
     mocks.listeners.add(cb);
     return () => mocks.listeners.delete(cb);
@@ -318,5 +324,13 @@ describe('companion bridge ride handlers & lifecycle', () => {
       percent: 85,
       isAuto: false,
     });
+  });
+
+  it('clears session missed calls and transmits command to pocket phone', async () => {
+    resetCompanionBridgeForTests();
+    mocks.sendCommand.mockClear();
+
+    await clearCompanionMissedCalls();
+    expect(mocks.sendCommand).toHaveBeenCalledWith('/call/clear_missed');
   });
 });

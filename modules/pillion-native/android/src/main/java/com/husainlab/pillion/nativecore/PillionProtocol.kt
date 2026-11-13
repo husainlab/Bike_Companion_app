@@ -37,6 +37,7 @@ sealed class PillionPacket {
   data class CallIncoming(val caller: String, val phoneNumber: String = "") : PillionPacket()
   data class CallActive(val caller: String = "", val phoneNumber: String = "") : PillionPacket()
   data class CallMute(val isMuted: Boolean) : PillionPacket()
+  data object CallMissed : PillionPacket()
   data object CallEnd : PillionPacket()
   data class NotificationAdd(val notification: MirrorNotification) : PillionPacket()
   data class NotificationRemove(val key: String) : PillionPacket()
@@ -143,6 +144,7 @@ object PillionProtocol {
 
     return when (parts[0]) {
       "CALL_END" -> PillionPacket.CallEnd
+      "CALL_MISSED" -> PillionPacket.CallMissed
       "CALL_MUTE" -> parts.getOrNull(1)?.let { PillionPacket.CallMute(it == "1") }
       "CALL_ACTIVE" -> PillionPacket.CallActive(
         caller = parts.getOrNull(1) ?: "",
@@ -262,6 +264,9 @@ object PillionStateStore {
   @Volatile var callStartedAtMs: Long = 0L
   @Volatile var callerName: String = ""
   @Volatile var callerNumber: String = ""
+  @Volatile var sessionMissedCalls: Int = 0
+  @Volatile private var isCurrentIncomingAnswered: Boolean = false
+  @Volatile private var missedCallRecordedForCurrentCall: Boolean = false
   @Volatile var lastNotification: MirrorNotification? = null
 
   private val notificationsList = mutableListOf<MirrorNotification>()
@@ -294,6 +299,13 @@ object PillionStateStore {
 
   fun sendMessage(message: String) {
     outgoingSender?.invoke(message)
+  }
+
+  fun clearSessionMissedCalls(notify: Boolean = true) {
+    sessionMissedCalls = 0
+    if (notify) {
+      notifyChanged()
+    }
   }
 
   @Synchronized
@@ -399,6 +411,9 @@ object PillionStateStore {
     callStartedAtMs = 0L
     callerName = ""
     callerNumber = ""
+    sessionMissedCalls = 0
+    isCurrentIncomingAnswered = false
+    missedCallRecordedForCurrentCall = false
     lastNotification = null
     clearTransientCollections()
     if (notify) {
@@ -434,11 +449,14 @@ object PillionStateStore {
         callStartedAtMs = 0L
         callerName = packet.caller
         callerNumber = packet.phoneNumber
+        isCurrentIncomingAnswered = false
+        missedCallRecordedForCurrentCall = false
       }
       is PillionPacket.CallActive -> {
         val enteringActive = !isCallActive || isCallIncoming || callStartedAtMs <= 0L
         isCallActive = true
         isCallIncoming = false
+        isCurrentIncomingAnswered = true
         if (enteringActive) {
           callStartedAtMs = nowMs
         }
@@ -448,13 +466,25 @@ object PillionStateStore {
       is PillionPacket.CallMute -> {
         isCallMuted = packet.isMuted
       }
+      PillionPacket.CallMissed -> {
+        if (!missedCallRecordedForCurrentCall) {
+          sessionMissedCalls += 1
+          missedCallRecordedForCurrentCall = true
+        }
+      }
       PillionPacket.CallEnd -> {
+        if (isCallIncoming && !isCurrentIncomingAnswered && !missedCallRecordedForCurrentCall) {
+          sessionMissedCalls += 1
+          missedCallRecordedForCurrentCall = true
+        }
         isCallActive = false
         isCallIncoming = false
         isCallMuted = false
         callStartedAtMs = 0L
         callerName = ""
         callerNumber = ""
+        isCurrentIncomingAnswered = false
+        missedCallRecordedForCurrentCall = false
       }
       is PillionPacket.NotificationAdd -> upsertNotification(packet.notification)
       is PillionPacket.NotificationRemove -> removeNotification(packet.key)

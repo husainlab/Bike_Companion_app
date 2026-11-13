@@ -195,4 +195,43 @@ class PillionProtocolTest {
     assertEquals(40, PillionStateStore.getNotifications().size)
     PillionStateStore.resetTransientState()
   }
+
+  @Test
+  fun tracksSessionScopedMissedCallsAndClearsWhenViewed() {
+    PillionStateStore.resetTransientState()
+    assertEquals(0, PillionStateStore.sessionMissedCalls)
+
+    // Historical recent missed call does NOT increase sessionMissedCalls
+    PillionStateStore.applyPacket("RECENTS_BEGIN", false)
+    PillionStateStore.applyPacket("RECENT|old1|Old Caller|+15559999|3|1600000000000", false)
+    PillionStateStore.applyPacket("RECENTS_END", false)
+    assertEquals(1, PillionStateStore.getRecentCalls().size)
+    assertEquals(0, PillionStateStore.sessionMissedCalls)
+
+    // CallMissed packet increments sessionMissedCalls
+    assertEquals(PillionPacket.CallMissed, PillionProtocol.parse("CALL_MISSED", false))
+    PillionStateStore.applyPacket("CALL_MISSED", false)
+    assertEquals(1, PillionStateStore.sessionMissedCalls)
+
+    // Ringing call that ends without answer increments sessionMissedCalls
+    PillionStateStore.applyPacket("CALL_IN|Bob|+15551234", false)
+    PillionStateStore.applyPacket("CALL_END", false)
+    assertEquals(2, PillionStateStore.sessionMissedCalls)
+
+    // Answered call does NOT increment sessionMissedCalls
+    PillionStateStore.applyPacket("CALL_IN|Alice|+15555678", false)
+    PillionStateStore.applyPacket("CALL_ACTIVE|Alice|+15555678", false)
+    PillionStateStore.applyPacket("CALL_END", false)
+    assertEquals(2, PillionStateStore.sessionMissedCalls)
+
+    // User views/acknowledges calls ("once done forget it")
+    PillionStateStore.clearSessionMissedCalls()
+    assertEquals(0, PillionStateStore.sessionMissedCalls)
+
+    // Disconnect/reset clears session missed calls
+    PillionStateStore.applyPacket("CALL_MISSED", false)
+    assertEquals(1, PillionStateStore.sessionMissedCalls)
+    PillionStateStore.resetTransientState()
+    assertEquals(0, PillionStateStore.sessionMissedCalls)
+  }
 }

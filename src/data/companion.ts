@@ -80,6 +80,7 @@ export async function sendCockpitCommand(
     | '/call/decline'
     | '/call/mute'
     | `/call/mute|${'0' | '1'}`
+    | '/call/clear_missed'
     | '/sync/contacts'
     | `/call/dial|${string}`
     | `/notif/dismiss|${string}`
@@ -102,6 +103,10 @@ export async function dialContactNumber(phoneNumber: string): Promise<void> {
 export async function syncCompanionContacts(): Promise<void> {
   await PillionNative?.syncContacts();
   await sendCockpitCommand('/sync/contacts');
+}
+
+export async function clearSessionMissedCalls(): Promise<void> {
+  await sendCockpitCommand('/call/clear_missed');
 }
 
 export async function dismissMirroredNotification(key: string): Promise<void> {

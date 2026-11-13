@@ -59,6 +59,7 @@ export interface CompanionSnapshot {
   callStartedAtMs: number;
   callerName: string;
   callerNumber: string;
+  sessionMissedCalls: number;
   notifications: MirrorNotification[];
   contacts: SyncedContact[];
   recentCalls: RecentCallEntry[];
@@ -115,6 +116,7 @@ export const EMPTY_SNAPSHOT: CompanionSnapshot = {
   callStartedAtMs: 0,
   callerName: '',
   callerNumber: '',
+  sessionMissedCalls: 0,
   notifications: [],
   contacts: [],
   recentCalls: [],

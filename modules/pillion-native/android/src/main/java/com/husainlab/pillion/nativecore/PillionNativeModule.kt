@@ -714,6 +714,9 @@ class PillionNativeModule : Module() {
           PillionStateStore.notifyChanged()
           PillionStateStore.sendMessage("CALL_MUTE|${if (nextMuted) "1" else "0"}")
         }
+        path == "/call/clear_missed" -> {
+          PillionStateStore.clearSessionMissedCalls()
+        }
         path.startsWith("/call/mute|") -> {
           val nextMuted = path.removePrefix("/call/mute|") == "1"
           try {
@@ -802,6 +805,7 @@ class PillionNativeModule : Module() {
     "callStartedAtMs" to PillionStateStore.callStartedAtMs.toDouble(),
     "callerName" to PillionStateStore.callerName,
     "callerNumber" to PillionStateStore.callerNumber,
+    "sessionMissedCalls" to PillionStateStore.sessionMissedCalls,
     "notifications" to PillionStateStore.getNotifications().map {
       mapOf(
         "key" to it.key,

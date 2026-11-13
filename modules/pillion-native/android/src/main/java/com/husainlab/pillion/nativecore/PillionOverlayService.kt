@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -48,6 +49,7 @@ class PillionOverlayService : Service() {
 
   private data class RenderSignature(
     val isExpanded: Boolean,
+    val isLandscape: Boolean,
     val popupKey: String?,
     val activeTab: WidgetTab,
     val callsSubTab: CallsSubTab,
@@ -81,6 +83,7 @@ class PillionOverlayService : Service() {
   private var prevCallIncoming = false
   private var prevVolumePercent = -1
   private var isVolumeHudVisible = false
+  private var isUserAdjustingVolume = false
   private var isUserSeeking = false
   private var lastSignature: RenderSignature? = null
 
@@ -95,7 +98,7 @@ class PillionOverlayService : Service() {
   private var mediaPlayPauseButton: TextView? = null
   private var callTimerView: TextView? = null
   private var volumeHudContainer: LinearLayout? = null
-  private var volumeHudBar: ProgressBar? = null
+  private var volumeHudBar: SeekBar? = null
   private var volumeHudLabel: TextView? = null
 
   private val hidePopupRunnable = Runnable {
@@ -104,17 +107,49 @@ class PillionOverlayService : Service() {
   }
 
   private val hideVolumeRunnable = Runnable {
+    if (isUserAdjustingVolume) return@Runnable
+    val wasVisible = isVolumeHudVisible
     isVolumeHudVisible = false
     volumeHudContainer?.visibility = View.GONE
+    if (wasVisible) {
+      val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE ||
+        resources.displayMetrics.widthPixels > resources.displayMetrics.heightPixels
+      val hudHeight = dp(if (isLandscape) 42 else 50)
+      val metrics = resources.displayMetrics
+      val viewHeight = (rootContainer?.height ?: dp(80)).coerceAtLeast(dp(36))
+      params.y = PillionProtocol.clampOverlayCoord(params.y + hudHeight, metrics.heightPixels - viewHeight)
+      rootContainer?.let {
+        try {
+          windowManager.updateViewLayout(it, params)
+        } catch (_: Exception) {}
+      }
+    }
   }
 
   private fun showVolumeHud(pct: Int, isAuto: Boolean = false) {
     mainHandler.removeCallbacks(hideVolumeRunnable)
+    val wasVisible = isVolumeHudVisible
     isVolumeHudVisible = true
     val autoTag = if (isAuto) " (AUTO)" else ""
     volumeHudLabel?.text = "VOLUME $pct%$autoTag"
-    volumeHudBar?.progress = pct
-    volumeHudContainer?.visibility = View.VISIBLE
+    if (!isUserAdjustingVolume) {
+      volumeHudBar?.progress = pct
+    }
+    if (!wasVisible) {
+      volumeHudContainer?.visibility = View.VISIBLE
+      val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE ||
+        resources.displayMetrics.widthPixels > resources.displayMetrics.heightPixels
+      val hudHeight = dp(if (isLandscape) 42 else 50)
+      val newY = (params.y - hudHeight).coerceAtLeast(0)
+      if (newY != params.y) {
+        params.y = newY
+        rootContainer?.let {
+          try {
+            windowManager.updateViewLayout(it, params)
+          } catch (_: Exception) {}
+        }
+      }
+    }
     mainHandler.postDelayed(hideVolumeRunnable, 2500L)
   }
 
@@ -206,6 +241,21 @@ class PillionOverlayService : Service() {
       return START_NOT_STICKY
     }
     return START_NOT_STICKY
+  }
+
+  override fun onConfigurationChanged(newConfig: Configuration) {
+    super.onConfigurationChanged(newConfig)
+    val metrics = resources.displayMetrics
+    val viewWidth = (rootContainer?.width ?: dp(80)).coerceAtLeast(dp(48))
+    val viewHeight = (rootContainer?.height ?: dp(48)).coerceAtLeast(dp(36))
+    params.x = PillionProtocol.clampOverlayCoord(params.x, metrics.widthPixels - viewWidth)
+    params.y = PillionProtocol.clampOverlayCoord(params.y, metrics.heightPixels - viewHeight)
+    rootContainer?.let {
+      try {
+        windowManager.updateViewLayout(it, params)
+      } catch (_: Exception) {}
+    }
+    render()
   }
 
   private fun startOverlayForeground() {
@@ -387,10 +437,13 @@ class PillionOverlayService : Service() {
     val contacts = PillionStateStore.getContacts()
     val recents = PillionStateStore.getRecentCalls()
     val alerts = PillionStateStore.getNotifications()
-    val missedCalls = recents.count { it.callType == 3 }
+    val missedCalls = PillionStateStore.sessionMissedCalls
+    val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE ||
+      resources.displayMetrics.widthPixels > resources.displayMetrics.heightPixels
     val showCollapsedTitle = PillionStateStore.songTitle != "No Media Playing" && !PillionStateStore.isCallActive
     return RenderSignature(
       isExpanded = isExpanded,
+      isLandscape = isLandscape,
       popupKey = if (!isExpanded) popupNotification?.key else null,
       activeTab = activeTab,
       callsSubTab = callsSubTab,
@@ -481,7 +534,9 @@ class PillionOverlayService : Service() {
       mediaTimeView?.text = ""
     }
     mediaPlayPauseButton?.text = if (PillionStateStore.isPlaying) "PAUSE" else "PLAY"
-    volumeHudBar?.progress = PillionStateStore.volumePercent
+    if (!isUserAdjustingVolume) {
+      volumeHudBar?.progress = PillionStateStore.volumePercent
+    }
   }
 
   private fun render() {
@@ -603,21 +658,101 @@ class PillionOverlayService : Service() {
     }
 
     // Expanded Android Auto-style Floating Widget
-    root.setPadding(dp(12), dp(12), dp(12), dp(12))
+    val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE ||
+      resources.displayMetrics.widthPixels > resources.displayMetrics.heightPixels
+
+    if (isLandscape) {
+      root.setPadding(dp(10), dp(5), dp(10), dp(5))
+    } else {
+      root.setPadding(dp(12), dp(10), dp(12), dp(10))
+    }
+
     val metrics = resources.displayMetrics
     val screenWidthDp = (metrics.widthPixels / metrics.density).roundToInt()
-    val panelWidthDp = (screenWidthDp - 24).coerceIn(280, 340)
+    val panelWidthDp = if (isLandscape) {
+      (screenWidthDp - 36).coerceIn(340, 420)
+    } else {
+      (screenWidthDp - 24).coerceIn(280, 340)
+    }
 
     val panel = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       layoutParams = LinearLayout.LayoutParams(dp(panelWidthDp), LinearLayout.LayoutParams.WRAP_CONTENT)
     }
 
+    // Interactive Volume Bar Panel on top of widget (extends widget when visible without displacing controls)
+    val volHud = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding(dp(10), dp(if (isLandscape) 4 else 6), dp(10), dp(if (isLandscape) 4 else 6))
+      background = roundedBox(cardBg, orange, 1, 8)
+      visibility = if (isVolumeHudVisible) View.VISIBLE else View.GONE
+      val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+      lp.bottomMargin = dp(if (isLandscape) 4 else 6)
+      layoutParams = lp
+    }
+    volumeHudContainer = volHud
+
+    val vhHeader = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+    }
+    val vhLabel = TextView(this).apply {
+      text = "VOLUME ${PillionStateStore.volumePercent}%"
+      setTextColor(orange)
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+      typeface = Typeface.MONOSPACE
+      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+    }
+    volumeHudLabel = vhLabel
+    vhHeader.addView(vhLabel)
+
+    vhHeader.addView(TextView(this).apply {
+      text = "SLIDE TO TUNE"
+      setTextColor(muted)
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+      typeface = Typeface.MONOSPACE
+    })
+    volHud.addView(vhHeader)
+
+    val vhBar = SeekBar(this).apply {
+      max = 100
+      progress = PillionStateStore.volumePercent
+      val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(if (isLandscape) 22 else 26))
+      lp.topMargin = dp(2)
+      layoutParams = lp
+      setPadding(dp(4), 0, dp(4), 0)
+    }
+    vhBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+      override fun onProgressChanged(seekBar: SeekBar?, prog: Int, fromUser: Boolean) {
+        if (fromUser) {
+          mainHandler.removeCallbacks(hideVolumeRunnable)
+          volumeHudLabel?.text = "VOLUME $prog%"
+          PillionStateStore.volumePercent = prog
+        }
+      }
+      override fun onStartTrackingTouch(seekBar: SeekBar?) {
+        isUserAdjustingVolume = true
+        mainHandler.removeCallbacks(hideVolumeRunnable)
+      }
+      override fun onStopTrackingTouch(seekBar: SeekBar?) {
+        isUserAdjustingVolume = false
+        seekBar?.let { sb ->
+          PillionStateStore.volumePercent = sb.progress
+          PillionStateStore.sendMessage("VOLUME|${sb.progress}")
+        }
+        mainHandler.removeCallbacks(hideVolumeRunnable)
+        mainHandler.postDelayed(hideVolumeRunnable, 2500L)
+      }
+    })
+    volumeHudBar = vhBar
+    volHud.addView(vhBar)
+    panel.addView(volHud)
+
     // Draggable Top Header
     val header = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
-      setPadding(0, 0, 0, dp(10))
+      setPadding(0, 0, 0, dp(if (isLandscape) 4 else 8))
     }
     attachDragOrClick(header)
 
@@ -644,11 +779,11 @@ class PillionOverlayService : Service() {
     headerBatteryView = batView
     header.addView(batView)
 
-    header.addView(makeButton("MAPS", cardBg, orange, orange, textSp = 11f, padH = 9, padV = 5) {
+    header.addView(makeButton("MAPS", cardBg, orange, orange, textSp = 11f, padH = 9, padV = if (isLandscape) 3 else 5) {
       openLocalMaps()
     })
 
-    header.addView(makeButton("-", cardBg, muted, border, textSp = 13f, padH = 10, padV = 5) {
+    header.addView(makeButton("-", cardBg, muted, border, textSp = 13f, padH = 10, padV = if (isLandscape) 3 else 5) {
       isExpanded = false
       render()
     }.apply {
@@ -662,96 +797,194 @@ class PillionOverlayService : Service() {
     if (PillionStateStore.isCallActive) {
       val isIncoming = PillionStateStore.isCallIncoming
       val isMuted = PillionStateStore.isCallMuted
-      val callBox = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(12), dp(12), dp(12), dp(12))
-        background = roundedBox(cardBg, if (isIncoming) crimson else if (isMuted) orange else emerald, 1, 9)
-        val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        lp.bottomMargin = dp(10)
-        layoutParams = lp
-      }
-      val statusTv = TextView(this).apply {
-        val elapsed = if (!isIncoming && PillionStateStore.callStartedAtMs > 0L) {
-          " • " + PillionProtocol.formatCallElapsed(PillionStateStore.callStartedAtMs)
-        } else ""
-        val mutedTag = if (isMuted) " • MUTED" else ""
-        text = if (isIncoming) "INCOMING CALL" else "ACTIVE CALL$elapsed$mutedTag"
-        setTextColor(if (isIncoming) crimson else if (isMuted) orange else emerald)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        typeface = Typeface.MONOSPACE
-      }
-      callTimerView = statusTv
-      callBox.addView(statusTv)
 
-      callBox.addView(TextView(this).apply {
-        text = "AUDIO ON POCKET PHONE / INTERCOM"
-        setTextColor(muted)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
-        typeface = Typeface.MONOSPACE
-        setPadding(0, dp(1), 0, dp(4))
-      })
+      if (isLandscape) {
+        val callBox = LinearLayout(this).apply {
+          orientation = LinearLayout.HORIZONTAL
+          gravity = Gravity.CENTER_VERTICAL
+          setPadding(dp(8), dp(4), dp(8), dp(4))
+          background = roundedBox(cardBg, if (isIncoming) crimson else if (isMuted) orange else emerald, 1, 8)
+          val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+          lp.bottomMargin = dp(4)
+          layoutParams = lp
+        }
 
-      callBox.addView(TextView(this).apply {
-        text = PillionStateStore.callerName.ifEmpty { "Unknown Caller" }
-        setTextColor(Color.WHITE)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-        typeface = Typeface.DEFAULT_BOLD
-        maxLines = 2
-        ellipsize = TextUtils.TruncateAt.END
-        setPadding(0, dp(2), 0, dp(2))
-      })
-      if (PillionStateStore.callerNumber.isNotEmpty() && PillionStateStore.callerNumber != PillionStateStore.callerName) {
-        callBox.addView(TextView(this).apply {
-          text = PillionStateStore.callerNumber
-          setTextColor(muted)
-          setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        val infoCol = LinearLayout(this).apply {
+          orientation = LinearLayout.VERTICAL
+          layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.25f)
+        }
+        val statusTv = TextView(this).apply {
+          val elapsed = if (!isIncoming && PillionStateStore.callStartedAtMs > 0L) {
+            " • " + PillionProtocol.formatCallElapsed(PillionStateStore.callStartedAtMs)
+          } else ""
+          val mutedTag = if (isMuted) " • MUTED" else ""
+          text = if (isIncoming) "INCOMING CALL" else "ACTIVE$elapsed$mutedTag"
+          setTextColor(if (isIncoming) crimson else if (isMuted) orange else emerald)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
           typeface = Typeface.MONOSPACE
-        })
-      }
+        }
+        callTimerView = statusTv
+        infoCol.addView(statusTv)
 
-      val actions = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        lp.topMargin = dp(10)
-        layoutParams = lp
-      }
-      actions.addView(makeButton(
-        if (isIncoming) "DECLINE" else "END CALL",
-        crimson,
-        Color.WHITE,
-        crimson,
-        textSp = 13f
-      ) {
-        PillionStateStore.sendMessage("/call/decline")
-      }.apply {
-        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-      })
-
-      if (isIncoming) {
-        actions.addView(makeButton("ANSWER", emerald, Color.BLACK, emerald, textSp = 13f) {
-          PillionStateStore.sendMessage("/call/answer")
-        }.apply {
-          val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-          lp.marginStart = dp(8)
-          layoutParams = lp
+        infoCol.addView(TextView(this).apply {
+          text = PillionStateStore.callerName.ifEmpty { "Unknown Caller" }
+          setTextColor(Color.WHITE)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+          typeface = Typeface.DEFAULT_BOLD
+          maxLines = 1
+          ellipsize = TextUtils.TruncateAt.END
         })
-      } else {
+
+        if (PillionStateStore.callerNumber.isNotEmpty() && PillionStateStore.callerNumber != PillionStateStore.callerName) {
+          infoCol.addView(TextView(this).apply {
+            text = PillionStateStore.callerNumber
+            setTextColor(muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            typeface = Typeface.MONOSPACE
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+          })
+        }
+        callBox.addView(infoCol)
+
+        val actions = LinearLayout(this).apply {
+          orientation = LinearLayout.HORIZONTAL
+          gravity = Gravity.CENTER_VERTICAL
+          layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
         actions.addView(makeButton(
-          if (isMuted) "MUTED" else "MUTE MIC",
-          if (isMuted) orange else surfaceMuted,
-          if (isMuted) Color.BLACK else Color.WHITE,
-          if (isMuted) orange else border,
-          textSp = 13f
+          if (isIncoming) "DECLINE" else "END",
+          crimson,
+          Color.WHITE,
+          crimson,
+          textSp = 11f,
+          padH = 6,
+          padV = 5
         ) {
-          PillionStateStore.sendMessage("/call/mute")
+          PillionStateStore.sendMessage("/call/decline")
         }.apply {
-          val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-          lp.marginStart = dp(8)
-          layoutParams = lp
+          layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
+
+        if (isIncoming) {
+          actions.addView(makeButton("ANSWER", emerald, Color.BLACK, emerald, textSp = 11f, padH = 6, padV = 5) {
+            PillionStateStore.sendMessage("/call/answer")
+          }.apply {
+            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            lp.marginStart = dp(5)
+            layoutParams = lp
+          })
+        } else {
+          actions.addView(makeButton(
+            if (isMuted) "MUTED" else "MUTE",
+            if (isMuted) orange else surfaceMuted,
+            if (isMuted) Color.BLACK else Color.WHITE,
+            if (isMuted) orange else border,
+            textSp = 11f,
+            padH = 6,
+            padV = 5
+          ) {
+            PillionStateStore.sendMessage("/call/mute")
+          }.apply {
+            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            lp.marginStart = dp(5)
+            layoutParams = lp
+          })
+        }
+        callBox.addView(actions)
+        panel.addView(callBox)
+      } else {
+        val callBox = LinearLayout(this).apply {
+          orientation = LinearLayout.VERTICAL
+          setPadding(dp(12), dp(10), dp(12), dp(10))
+          background = roundedBox(cardBg, if (isIncoming) crimson else if (isMuted) orange else emerald, 1, 9)
+          val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+          lp.bottomMargin = dp(8)
+          layoutParams = lp
+        }
+        val statusTv = TextView(this).apply {
+          val elapsed = if (!isIncoming && PillionStateStore.callStartedAtMs > 0L) {
+            " • " + PillionProtocol.formatCallElapsed(PillionStateStore.callStartedAtMs)
+          } else ""
+          val mutedTag = if (isMuted) " • MUTED" else ""
+          text = if (isIncoming) "INCOMING CALL" else "ACTIVE CALL$elapsed$mutedTag"
+          setTextColor(if (isIncoming) crimson else if (isMuted) orange else emerald)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+          typeface = Typeface.MONOSPACE
+        }
+        callTimerView = statusTv
+        callBox.addView(statusTv)
+
+        callBox.addView(TextView(this).apply {
+          text = "AUDIO ON POCKET PHONE / INTERCOM"
+          setTextColor(muted)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+          typeface = Typeface.MONOSPACE
+          setPadding(0, dp(1), 0, dp(3))
+        })
+
+        callBox.addView(TextView(this).apply {
+          text = PillionStateStore.callerName.ifEmpty { "Unknown Caller" }
+          setTextColor(Color.WHITE)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+          typeface = Typeface.DEFAULT_BOLD
+          maxLines = 2
+          ellipsize = TextUtils.TruncateAt.END
+          setPadding(0, dp(1), 0, dp(1))
+        })
+        if (PillionStateStore.callerNumber.isNotEmpty() && PillionStateStore.callerNumber != PillionStateStore.callerName) {
+          callBox.addView(TextView(this).apply {
+            text = PillionStateStore.callerNumber
+            setTextColor(muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            typeface = Typeface.MONOSPACE
+          })
+        }
+
+        val actions = LinearLayout(this).apply {
+          orientation = LinearLayout.HORIZONTAL
+          val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+          lp.topMargin = dp(8)
+          layoutParams = lp
+        }
+        actions.addView(makeButton(
+          if (isIncoming) "DECLINE" else "END CALL",
+          crimson,
+          Color.WHITE,
+          crimson,
+          textSp = 12f
+        ) {
+          PillionStateStore.sendMessage("/call/decline")
+        }.apply {
+          layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+
+        if (isIncoming) {
+          actions.addView(makeButton("ANSWER", emerald, Color.BLACK, emerald, textSp = 12f) {
+            PillionStateStore.sendMessage("/call/answer")
+          }.apply {
+            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            lp.marginStart = dp(8)
+            layoutParams = lp
+          })
+        } else {
+          actions.addView(makeButton(
+            if (isMuted) "MUTED" else "MUTE MIC",
+            if (isMuted) orange else surfaceMuted,
+            if (isMuted) Color.BLACK else Color.WHITE,
+            if (isMuted) orange else border,
+            textSp = 12f
+          ) {
+            PillionStateStore.sendMessage("/call/mute")
+          }.apply {
+            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            lp.marginStart = dp(8)
+            layoutParams = lp
+          })
+        }
+        callBox.addView(actions)
+        panel.addView(callBox)
       }
-      callBox.addView(actions)
-      panel.addView(callBox)
     }
 
     // Main Widget Tab Content
@@ -759,14 +992,14 @@ class PillionOverlayService : Service() {
       WidgetTab.MEDIA -> {
         val mediaCard = LinearLayout(this).apply {
           orientation = LinearLayout.VERTICAL
-          setPadding(dp(12), dp(10), dp(12), dp(10))
+          setPadding(dp(12), dp(if (isLandscape) 4 else 8), dp(12), dp(if (isLandscape) 4 else 8))
           background = roundedBox(cardBg, border, 1, 9)
         }
         val topMeta = LinearLayout(this).apply {
           orientation = LinearLayout.HORIZONTAL
           gravity = Gravity.CENTER_VERTICAL
           val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-          lp.bottomMargin = dp(4)
+          lp.bottomMargin = dp(if (isLandscape) 2 else 4)
           layoutParams = lp
         }
         topMeta.addView(TextView(this).apply {
@@ -791,9 +1024,9 @@ class PillionOverlayService : Service() {
         val titleTv = TextView(this).apply {
           text = PillionStateStore.songTitle
           setTextColor(Color.WHITE)
-          setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, if (isLandscape) 13f else 15f)
           typeface = Typeface.DEFAULT_BOLD
-          maxLines = 2
+          maxLines = if (isLandscape) 1 else 2
           ellipsize = TextUtils.TruncateAt.END
         }
         mediaTitleView = titleTv
@@ -802,10 +1035,10 @@ class PillionOverlayService : Service() {
         val artistTv = TextView(this).apply {
           text = PillionStateStore.artistName
           setTextColor(muted)
-          setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-          maxLines = 2
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, if (isLandscape) 11f else 12f)
+          maxLines = 1
           ellipsize = TextUtils.TruncateAt.END
-          setPadding(0, dp(2), 0, 0)
+          setPadding(0, dp(1), 0, 0)
         }
         mediaArtistView = artistTv
         mediaCard.addView(artistTv)
@@ -816,8 +1049,8 @@ class PillionOverlayService : Service() {
             progress = ((PillionStateStore.progressMs.toDouble() / PillionStateStore.durationMs.toDouble()) * 1000.0)
               .roundToInt()
               .coerceIn(0, 1000)
-            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(26))
-            lp.topMargin = dp(6)
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(if (isLandscape) 18 else 24))
+            lp.topMargin = dp(if (isLandscape) 2 else 5)
             layoutParams = lp
             setPadding(dp(4), 0, dp(4), 0)
           }
@@ -852,10 +1085,10 @@ class PillionOverlayService : Service() {
         val controls = LinearLayout(this).apply {
           orientation = LinearLayout.HORIZONTAL
           val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-          lp.topMargin = dp(8)
+          lp.topMargin = dp(if (isLandscape) 3 else 6)
           layoutParams = lp
         }
-        controls.addView(makeButton("PREV", cardBg, Color.WHITE, border) {
+        controls.addView(makeButton("PREV", cardBg, Color.WHITE, border, textSp = if (isLandscape) 11f else 13f, padV = if (isLandscape) 5 else 8) {
           PillionStateStore.sendMessage("/media/prev")
         }.apply {
           layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -864,7 +1097,9 @@ class PillionOverlayService : Service() {
           if (PillionStateStore.isPlaying) "PAUSE" else "PLAY",
           orange,
           Color.BLACK,
-          orange
+          orange,
+          textSp = if (isLandscape) 11f else 13f,
+          padV = if (isLandscape) 5 else 8
         ) {
           PillionStateStore.sendMessage("/media/playpause")
         }.apply {
@@ -875,58 +1110,28 @@ class PillionOverlayService : Service() {
         }
         mediaPlayPauseButton = playBtn
         controls.addView(playBtn)
-        controls.addView(makeButton("NEXT", cardBg, Color.WHITE, border) {
+        controls.addView(makeButton("NEXT", cardBg, Color.WHITE, border, textSp = if (isLandscape) 11f else 13f, padV = if (isLandscape) 5 else 8) {
           PillionStateStore.sendMessage("/media/next")
         }.apply {
           layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
         panel.addView(controls)
 
-        val volHud = LinearLayout(this).apply {
-          orientation = LinearLayout.VERTICAL
-          setPadding(dp(10), dp(6), dp(10), dp(6))
-          background = roundedBox(cardBg, orange, 1, 7)
-          visibility = if (isVolumeHudVisible) View.VISIBLE else View.GONE
-          val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-          lp.topMargin = dp(6)
-          layoutParams = lp
-        }
-        volumeHudContainer = volHud
-
-        val vhLabel = TextView(this).apply {
-          text = "VOLUME ${PillionStateStore.volumePercent}%"
-          setTextColor(orange)
-          setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-          typeface = Typeface.MONOSPACE
-        }
-        volumeHudLabel = vhLabel
-        volHud.addView(vhLabel)
-
-        val vhBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-          max = 100
-          progress = PillionStateStore.volumePercent
-          val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(4))
-          lp.topMargin = dp(4)
-          layoutParams = lp
-        }
-        volumeHudBar = vhBar
-        volHud.addView(vhBar)
-        panel.addView(volHud)
-
+        // Stationary Volume buttons directly beneath transport controls
         val volRow = LinearLayout(this).apply {
           orientation = LinearLayout.HORIZONTAL
           val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-          lp.topMargin = dp(6)
+          lp.topMargin = dp(if (isLandscape) 3 else 6)
           layoutParams = lp
         }
-        volRow.addView(makeButton("VOL -", surfaceMuted, muted, border, textSp = 12f, padV = 8) {
+        volRow.addView(makeButton("VOL -", surfaceMuted, muted, border, textSp = if (isLandscape) 11f else 12f, padV = if (isLandscape) 5 else 8) {
           val next = (PillionStateStore.volumePercent - 7).coerceIn(0, 100)
           showVolumeHud(next, false)
           PillionStateStore.sendMessage("/volume/down")
         }.apply {
           layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        volRow.addView(makeButton("VOL +", surfaceMuted, muted, border, textSp = 12f, padV = 8) {
+        volRow.addView(makeButton("VOL +", surfaceMuted, muted, border, textSp = if (isLandscape) 11f else 12f, padV = if (isLandscape) 5 else 8) {
           val next = (PillionStateStore.volumePercent + 7).coerceIn(0, 100)
           showVolumeHud(next, false)
           PillionStateStore.sendMessage("/volume/up")
@@ -942,7 +1147,7 @@ class PillionOverlayService : Service() {
         val subBar = LinearLayout(this).apply {
           orientation = LinearLayout.HORIZONTAL
           val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-          lp.bottomMargin = dp(8)
+          lp.bottomMargin = dp(if (isLandscape) 4 else 8)
           layoutParams = lp
         }
         fun addSubBtn(tab: CallsSubTab, label: String, margin: Boolean = true) {
@@ -952,9 +1157,9 @@ class PillionOverlayService : Service() {
             if (selected) surfaceMuted else cardBg,
             if (selected) orange else muted,
             if (selected) orange else border,
-            textSp = 11f,
+            textSp = if (isLandscape) 10f else 11f,
             padH = 6,
-            padV = 6
+            padV = if (isLandscape) 4 else 6
           ) {
             callsSubTab = tab
             render()
@@ -974,21 +1179,21 @@ class PillionOverlayService : Service() {
           val readoutRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setPadding(dp(10), dp(if (isLandscape) 4 else 8), dp(10), dp(if (isLandscape) 4 else 8))
             background = roundedBox(cardBg, border, 1, 7)
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.bottomMargin = dp(6)
+            lp.bottomMargin = dp(if (isLandscape) 3 else 6)
             layoutParams = lp
           }
           readoutRow.addView(TextView(this).apply {
             text = if (keypadDigits.isEmpty()) "Enter number" else keypadDigits.toString()
             setTextColor(if (keypadDigits.isEmpty()) muted else Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (isLandscape) 13f else 15f)
             typeface = Typeface.MONOSPACE
             maxLines = 1
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
           })
-          readoutRow.addView(makeButton("DEL", surfaceMuted, muted, border, textSp = 11f, padH = 8, padV = 5) {
+          readoutRow.addView(makeButton("DEL", surfaceMuted, muted, border, textSp = 11f, padH = 8, padV = if (isLandscape) 3 else 5) {
             if (keypadDigits.isNotEmpty()) {
               keypadDigits.deleteCharAt(keypadDigits.length - 1)
               render()
@@ -1006,11 +1211,11 @@ class PillionOverlayService : Service() {
             val kr = LinearLayout(this).apply {
               orientation = LinearLayout.HORIZONTAL
               val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-              lp.bottomMargin = dp(4)
+              lp.bottomMargin = dp(if (isLandscape) 2 else 4)
               layoutParams = lp
             }
             keys.forEachIndexed { idx, key ->
-              kr.addView(makeButton(key, cardBg, Color.WHITE, border, textSp = 15f, padV = 7) {
+              kr.addView(makeButton(key, cardBg, Color.WHITE, border, textSp = if (isLandscape) 13f else 15f, padV = if (isLandscape) 4 else 7) {
                 keypadDigits.append(key)
                 render()
               }.apply {
@@ -1022,7 +1227,7 @@ class PillionOverlayService : Service() {
             panel.addView(kr)
           }
 
-          panel.addView(makeButton("CALL VIA POCKET PHONE", emerald, Color.BLACK, emerald, textSp = 13f, padV = 10) {
+          panel.addView(makeButton("CALL VIA POCKET PHONE", emerald, Color.BLACK, emerald, textSp = if (isLandscape) 11f else 13f, padV = if (isLandscape) 6 else 10) {
             if (keypadDigits.isNotEmpty()) {
               dialOverBluetooth(keypadDigits.toString())
             }
@@ -1033,7 +1238,7 @@ class PillionOverlayService : Service() {
           })
         } else {
           val scroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(196))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(if (isLandscape) 110 else 196))
           }
           val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
@@ -1100,7 +1305,7 @@ class PillionOverlayService : Service() {
 
       WidgetTab.ALERTS -> {
         val scroll = ScrollView(this).apply {
-          layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(204))
+          layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(if (isLandscape) 110 else 204))
         }
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val items = PillionStateStore.getNotifications()
@@ -1115,10 +1320,10 @@ class PillionOverlayService : Service() {
           items.take(10).forEach { notif ->
             val itemCard = LinearLayout(this).apply {
               orientation = LinearLayout.VERTICAL
-              setPadding(dp(10), dp(8), dp(10), dp(8))
+              setPadding(dp(10), dp(if (isLandscape) 4 else 8), dp(10), dp(if (isLandscape) 4 else 8))
               background = roundedBox(cardBg, border, 1, 7)
               val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-              lp.bottomMargin = dp(6)
+              lp.bottomMargin = dp(if (isLandscape) 3 else 6)
               layoutParams = lp
             }
             val top = LinearLayout(this).apply {
@@ -1143,16 +1348,16 @@ class PillionOverlayService : Service() {
                 text = notif.text
                 setTextColor(muted)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                maxLines = 3
+                maxLines = if (isLandscape) 2 else 3
                 ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(3), 0, 0)
+                setPadding(0, dp(2), 0, 0)
               })
             }
             if (notif.canReply) {
               val repliesRow = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(6)
+                lp.topMargin = dp(if (isLandscape) 3 else 6)
                 layoutParams = lp
               }
               val presets = listOf("Riding, call soon", "On my way")
@@ -1179,7 +1384,7 @@ class PillionOverlayService : Service() {
     val dock = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
       val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-      lp.topMargin = dp(10)
+      lp.topMargin = dp(if (isLandscape) 4 else 8)
       layoutParams = lp
     }
     fun addDockTab(tab: WidgetTab, label: String, marginEnd: Boolean = true) {
@@ -1189,20 +1394,23 @@ class PillionOverlayService : Service() {
         if (selected) orange else cardBg,
         if (selected) Color.BLACK else Color.WHITE,
         if (selected) orange else border,
-        textSp = 11f,
+        textSp = if (isLandscape) 10f else 11f,
         padH = 4,
-        padV = 8,
+        padV = if (isLandscape) 5 else 8,
         maxLines = 1
       ) {
         activeTab = tab
+        if (tab == WidgetTab.CALLS) {
+          PillionStateStore.clearSessionMissedCalls()
+        }
         render()
       }.apply {
         val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        if (marginEnd) lp.marginEnd = dp(6)
+        if (marginEnd) lp.marginEnd = dp(if (isLandscape) 4 else 6)
         layoutParams = lp
       })
     }
-    val missedCalls = PillionStateStore.getRecentCalls().count { it.callType == 3 }
+    val missedCalls = PillionStateStore.sessionMissedCalls
     val alertsCount = PillionStateStore.getNotifications().size
     addDockTab(WidgetTab.MEDIA, "MEDIA")
     addDockTab(WidgetTab.CALLS, if (missedCalls > 0) "CALLS ($missedCalls)" else "CALLS")
