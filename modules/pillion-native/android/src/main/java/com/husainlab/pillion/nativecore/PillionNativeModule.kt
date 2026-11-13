@@ -901,7 +901,8 @@ class PillionNativeModule : Module() {
         "title" to it.title,
         "text" to it.text,
         "receivedAt" to it.receivedAt.toDouble(),
-        "canReply" to it.canReply
+        "canReply" to it.canReply,
+        "messages" to it.messages
       )
     },
     "contacts" to PillionStateStore.getContacts().map {

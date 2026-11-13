@@ -8,7 +8,8 @@ data class MirrorNotification(
   val title: String,
   val text: String,
   val receivedAt: Long = System.currentTimeMillis(),
-  val canReply: Boolean = false
+  val canReply: Boolean = false,
+  val messages: List<String> = emptyList()
 )
 
 data class SyncedContact(
@@ -203,13 +204,20 @@ object PillionProtocol {
       }
       "NOTIF_ADD" -> {
         if (parts.size >= 5) {
+          val key = parts[1]
+          val pkg = parts[2]
+          val title = parts[3]
+          val rawText = parts.drop(4).joinToString("|")
+          val unescapedText = unescapeKey(rawText)
+          val lines = unescapedText.split("\n", "\r").map { it.trim() }.filter { it.isNotEmpty() }
           PillionPacket.NotificationAdd(
             MirrorNotification(
-              key = parts[1],
-              packageName = parts[2],
-              title = parts[3],
-              text = parts.drop(4).joinToString("|"),
-              canReply = false
+              key = key,
+              packageName = pkg,
+              title = title,
+              text = unescapedText,
+              canReply = false,
+              messages = if (lines.isNotEmpty()) lines else listOf(unescapedText)
             )
           )
         } else {
@@ -218,13 +226,21 @@ object PillionProtocol {
       }
       "NOTIF_ADD2" -> {
         if (parts.size >= 6) {
+          val key = parts[1]
+          val pkg = parts[2]
+          val canReply = parts[3] == "1"
+          val title = parts[4]
+          val rawText = parts.drop(5).joinToString("|")
+          val unescapedText = unescapeKey(rawText)
+          val lines = unescapedText.split("\n", "\r").map { it.trim() }.filter { it.isNotEmpty() }
           PillionPacket.NotificationAdd(
             MirrorNotification(
-              key = parts[1],
-              packageName = parts[2],
-              canReply = parts[3] == "1",
-              title = parts[4],
-              text = parts.drop(5).joinToString("|")
+              key = key,
+              packageName = pkg,
+              canReply = canReply,
+              title = title,
+              text = unescapedText,
+              messages = if (lines.isNotEmpty()) lines else listOf(unescapedText)
             )
           )
         } else {

@@ -32,3 +32,10 @@ By placing those Kotlin classes in `modules/pillion-native/` and declaring their
 - `/call/mute` operates strictly on the pocket phone's `AudioManager.isMicrophoneMute`, ensuring call audio stays on the rider's helmet intercom.
 - On call termination, `isMicrophoneMute` is automatically reset to `false` so future normal phone calls are never left muted.
 
+## Multi-Message Conversation Thread Extraction & Expandable Alerts
+- Standard Android notifications for messaging apps (WhatsApp, Telegram, Signal, Google Messages) bundle conversation history inside `Notification.EXTRA_MESSAGES` (MessagingStyle bundles) or `Notification.EXTRA_TEXT_LINES` (InboxStyle).
+- Merely reading `Notification.EXTRA_TEXT` discards earlier unread messages in that conversation, presenting only the single latest text.
+- `PillionNotificationListener` inspects `EXTRA_MESSAGES` first, extracting sender name and message body for all incoming texts in the active thread, falling back sequentially to `EXTRA_TEXT_LINES`, `EXTRA_BIG_TEXT`, and `EXTRA_TEXT`.
+- Individual messages are encoded over Bluetooth SPP using newline and delimiter escaping (`%0A`, `%7C`, `%25`) to preserve multi-line threads within single-line socket frames.
+- Both the floating handlebar overlay (`PillionOverlayService`) and the Alerts screen (`alerts.tsx`) track expansion state per notification, allowing riders to tap `+N MORE` / `COLLAPSE` to expand the full message history without cluttering the screen by default.
+

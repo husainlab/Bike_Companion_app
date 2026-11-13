@@ -82,6 +82,7 @@ class PillionOverlayService : Service() {
   private var keypadDigits = StringBuilder()
   private var popupNotification: MirrorNotification? = null
   private var lastSeenNotifKey: String? = null
+  private val expandedNotificationKeys = HashSet<String>()
   private var prevCallActive = false
   private var prevCallIncoming = false
   private var prevVolumePercent = -1
@@ -522,7 +523,7 @@ class PillionOverlayService : Service() {
       alertsCount = alerts.size,
       contactsStamp = contacts.hashCode(),
       recentsStamp = recents.hashCode(),
-      alertsStamp = alerts.hashCode(),
+      alertsStamp = alerts.hashCode() xor expandedNotificationKeys.hashCode(),
       showCollapsedTitle = showCollapsedTitle
     )
   }
@@ -634,8 +635,10 @@ class PillionOverlayService : Service() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
       }
+      val msgCount = if (popup.messages.isNotEmpty()) popup.messages.size else if (popup.text.contains("\n")) popup.text.split("\n", "\r").filter { it.isNotBlank() }.size else 1
+      val titleText = if (msgCount > 1) "${popup.title} ($msgCount texts)" else popup.title
       top.addView(TextView(this).apply {
-        text = popup.title
+        text = titleText
         setTextColor(orange)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         typeface = Typeface.DEFAULT_BOLD
@@ -644,15 +647,20 @@ class PillionOverlayService : Service() {
         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
       })
       top.addView(makeButton("OPEN", cardBg, emerald, emerald, textSp = 11f, padH = 8, padV = 4) {
+        if (msgCount > 1) {
+          expandedNotificationKeys.add(popup.key)
+        }
         popupNotification = null
         activeTab = WidgetTab.ALERTS
         isExpanded = true
         render()
       })
       row.addView(top)
-      if (popup.text.isNotEmpty()) {
+      val latestMsg = if (popup.messages.isNotEmpty()) popup.messages.last() else popup.text
+      if (latestMsg.isNotEmpty()) {
+        val preview = if (msgCount > 1) "$latestMsg (+${msgCount - 1} earlier)" else latestMsg
         row.addView(TextView(this).apply {
-          text = popup.text
+          text = preview
           setTextColor(Color.WHITE)
           setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
           maxLines = 3
@@ -661,6 +669,9 @@ class PillionOverlayService : Service() {
         })
       }
       attachDragOrClick(row) {
+        if (msgCount > 1) {
+          expandedNotificationKeys.add(popup.key)
+        }
         popupNotification = null
         activeTab = WidgetTab.ALERTS
         isExpanded = true
@@ -1412,10 +1423,14 @@ class PillionOverlayService : Service() {
           })
         } else {
           items.take(10).forEach { notif ->
+            val msgList = if (notif.messages.isNotEmpty()) notif.messages else notif.text.split("\n", "\r").filter { it.isNotBlank() }
+            val isMultiMessage = msgList.size > 1
+            val isExpandedNotif = expandedNotificationKeys.contains(notif.key)
+
             val itemCard = LinearLayout(this).apply {
               orientation = LinearLayout.VERTICAL
               setPadding(dp(10), dp(if (isLandscape) 4 else 8), dp(10), dp(if (isLandscape) 4 else 8))
-              background = roundedBox(cardBg, border, 1, 7)
+              background = roundedBox(cardBg, if (isExpandedNotif) emerald else border, 1, 7)
               val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
               lp.bottomMargin = dp(if (isLandscape) 3 else 6)
               layoutParams = lp
@@ -1425,7 +1440,7 @@ class PillionOverlayService : Service() {
               gravity = Gravity.CENTER_VERTICAL
             }
             top.addView(TextView(this).apply {
-              text = notif.title
+              text = if (isMultiMessage) "${notif.title} (${msgList.size})" else notif.title
               setTextColor(Color.WHITE)
               setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
               typeface = Typeface.DEFAULT_BOLD
@@ -1433,19 +1448,74 @@ class PillionOverlayService : Service() {
               ellipsize = TextUtils.TruncateAt.END
               layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
+
+            if (isMultiMessage || notif.text.length > 70) {
+              top.addView(makeButton(
+                if (isExpandedNotif) "COLLAPSE" else "+${if (isMultiMessage) msgList.size - 1 else 1} MORE",
+                surfaceMuted,
+                if (isExpandedNotif) muted else emerald,
+                if (isExpandedNotif) border else emerald,
+                textSp = 10f,
+                padH = 6,
+                padV = 3
+              ) {
+                if (isExpandedNotif) {
+                  expandedNotificationKeys.remove(notif.key)
+                } else {
+                  expandedNotificationKeys.add(notif.key)
+                }
+                render()
+              }.apply {
+                val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                lp.marginEnd = dp(6)
+                layoutParams = lp
+              })
+            }
+
             top.addView(makeButton("X", surfaceMuted, muted, border, textSp = 11f, padH = 8, padV = 3) {
+              expandedNotificationKeys.remove(notif.key)
               PillionStateStore.sendMessage("/notif/dismiss|${notif.key}")
             })
             itemCard.addView(top)
-            if (notif.text.isNotEmpty()) {
-              itemCard.addView(TextView(this).apply {
-                text = notif.text
-                setTextColor(muted)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                maxLines = if (isLandscape) 2 else 3
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(2), 0, 0)
-              })
+
+            if (isExpandedNotif) {
+              val messagesContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(4), 0, 0)
+              }
+              msgList.forEachIndexed { idx, msg ->
+                messagesContainer.addView(TextView(this).apply {
+                  val isLatest = idx == msgList.lastIndex
+                  text = if (isMultiMessage) "${idx + 1}. $msg" else msg
+                  setTextColor(if (isLatest) Color.WHITE else muted)
+                  setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                  setPadding(0, dp(1), 0, dp(1))
+                })
+              }
+              itemCard.addView(messagesContainer)
+            } else {
+              val preview = msgList.lastOrNull() ?: notif.text
+              if (preview.isNotEmpty()) {
+                itemCard.addView(TextView(this).apply {
+                  text = preview
+                  setTextColor(muted)
+                  setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                  maxLines = if (isLandscape) 2 else 3
+                  ellipsize = TextUtils.TruncateAt.END
+                  setPadding(0, dp(2), 0, 0)
+                })
+              }
+            }
+
+            if (isMultiMessage || notif.text.length > 70) {
+              itemCard.setOnClickListener {
+                if (isExpandedNotif) {
+                  expandedNotificationKeys.remove(notif.key)
+                } else {
+                  expandedNotificationKeys.add(notif.key)
+                }
+                render()
+              }
             }
             if (notif.canReply) {
               val repliesRow = LinearLayout(this).apply {

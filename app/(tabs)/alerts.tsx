@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View } from 'react-native';
 import { clearRideHistory } from '@/actions/cockpit';
 import { RIDING_QUICK_REPLIES } from '@/core/cockpit';
@@ -26,6 +26,7 @@ export default function AlertsScreen() {
   const palette = getPalette(settings.theme);
   const companion = useCompanionState();
   const { data } = useScreen('alerts-overview', [], loadCockpitOverview);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
   return (
     <PageShell
@@ -56,52 +57,116 @@ export default function AlertsScreen() {
               </Text>
             </Card>
           ) : (
-            companion.notifications.map((item) => (
-              <Card key={item.key} className="gap-3">
-                <View className="flex-row items-start justify-between gap-2 min-w-0">
-                  <View className="flex-1 min-w-0 pr-1 gap-0.5">
-                    <Text className="font-bold text-base text-foreground leading-snug" numberOfLines={2}>
-                      {item.title}
-                    </Text>
-                    <Text className="font-mono text-[11px] text-foreground-muted" numberOfLines={1}>
-                      {item.packageName} • {formatRelativeTime(item.receivedAt)}
-                    </Text>
-                  </View>
-                  <Press
-                    onPress={() => dismissMirroredNotification(item.key)}
-                    accessibilityLabel="Dismiss notification"
-                    className="h-9 w-9 shrink-0 items-center justify-center rounded-xs border-[1.5px] border-border bg-surface-muted active:border-danger"
-                  >
-                    <Icon name="x" size={16} color={palette.foregroundMuted} />
-                  </Press>
-                </View>
-                {item.text ? (
-                  <Text className="text-sm text-foreground-muted leading-relaxed" numberOfLines={4}>
-                    {item.text}
-                  </Text>
-                ) : null}
-                {item.canReply ? (
-                  <View className="pt-1 gap-1.5">
-                    <Text className="font-mono-bold text-xs text-accent">QUICK REPLY</Text>
-                    <View className="flex-row flex-wrap gap-2">
-                      {RIDING_QUICK_REPLIES.map((reply) => (
+            companion.notifications.map((item) => {
+              const msgList =
+                item.messages && item.messages.length > 0
+                  ? item.messages
+                  : item.text
+                    ? item.text.split('\n').filter(Boolean)
+                    : [];
+              const isMultiMessage = msgList.length > 1;
+              const isExpanded = expandedKeys.has(item.key);
+
+              return (
+                <Card key={item.key} className="gap-3">
+                  <View className="flex-row items-start justify-between gap-2 min-w-0">
+                    <View className="flex-1 min-w-0 pr-1 gap-0.5">
+                      <View className="flex-row items-center gap-2 flex-wrap">
+                        <Text className="font-bold text-base text-foreground leading-snug" numberOfLines={2}>
+                          {item.title}
+                        </Text>
+                        {isMultiMessage ? (
+                          <View className="rounded-xs border border-accent bg-surface-muted px-1.5 py-0.5">
+                            <Text className="font-mono text-[10px] text-accent">
+                              {msgList.length} TEXTS
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <Text className="font-mono text-[11px] text-foreground-muted" numberOfLines={1}>
+                        {item.packageName} • {formatRelativeTime(item.receivedAt)}
+                      </Text>
+                    </View>
+                    <View className="flex-row items-center gap-1.5">
+                      {isMultiMessage || (item.text && item.text.length > 70) ? (
                         <Press
-                          key={reply}
-                          onPress={async () => {
-                            await replyToMirroredNotification(item.key, reply);
-                            showToast(`Sent: "${reply}"`, 'success');
+                          onPress={() => {
+                            setExpandedKeys((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(item.key)) {
+                                next.delete(item.key);
+                              } else {
+                                next.add(item.key);
+                              }
+                              return next;
+                            });
                           }}
-                          className="flex-row items-center gap-1.5 rounded-sm border-[1.5px] border-accent bg-surface-muted px-3 py-2 min-h-10"
+                          accessibilityLabel={isExpanded ? 'Collapse messages' : 'Expand all messages'}
+                          className="h-9 px-2 shrink-0 flex-row items-center justify-center gap-1 rounded-xs border-[1.5px] border-border bg-surface-muted active:border-accent"
                         >
-                          <Icon name="send" size={14} color={palette.accent} />
-                          <Text className="font-bold text-xs text-accent">{reply}</Text>
+                          <Text className="font-mono-bold text-[11px] text-accent">
+                            {isExpanded ? 'LESS' : `+${isMultiMessage ? msgList.length - 1 : 1} MORE`}
+                          </Text>
                         </Press>
-                      ))}
+                      ) : null}
+                      <Press
+                        onPress={() => dismissMirroredNotification(item.key)}
+                        accessibilityLabel="Dismiss notification"
+                        className="h-9 w-9 shrink-0 items-center justify-center rounded-xs border-[1.5px] border-border bg-surface-muted active:border-danger"
+                      >
+                        <Icon name="x" size={16} color={palette.foregroundMuted} />
+                      </Press>
                     </View>
                   </View>
-                ) : null}
-              </Card>
-            ))
+
+                  {isExpanded ? (
+                    <View className="gap-2 pt-1 border-t border-border">
+                      {msgList.map((msg, idx) => (
+                        <View key={idx} className="flex-row items-start gap-2">
+                          {isMultiMessage ? (
+                            <Text className="font-mono text-xs text-accent mt-0.5">{idx + 1}.</Text>
+                          ) : null}
+                          <Text className="flex-1 text-sm text-foreground leading-relaxed">{msg}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : item.text ? (
+                    <Press
+                      onPress={() => {
+                        if (isMultiMessage || item.text.length > 70) {
+                          setExpandedKeys((prev) => new Set(prev).add(item.key));
+                        }
+                      }}
+                    >
+                      <Text className="text-sm text-foreground-muted leading-relaxed" numberOfLines={2}>
+                        {msgList[msgList.length - 1] ?? item.text}
+                      </Text>
+                    </Press>
+                  ) : null}
+
+                  {item.canReply ? (
+                    <View className="pt-1 gap-1.5">
+                      <Text className="font-mono-bold text-xs text-accent">QUICK REPLY</Text>
+                      <View className="flex-row flex-wrap gap-2">
+                        {RIDING_QUICK_REPLIES.map((reply) => (
+                          <Press
+                            key={reply}
+                            onPress={async () => {
+                              await replyToMirroredNotification(item.key, reply);
+                              showToast(`Sent: "${reply}"`, 'success');
+                            }}
+                            className="flex-row items-center gap-1.5 rounded-sm border-[1.5px] border-accent bg-surface-muted px-3 py-2 min-h-10"
+                          >
+                            <Icon name="send" size={14} color={palette.accent} />
+                            <Text className="font-bold text-xs text-accent">{reply}</Text>
+                          </Press>
+                        ))}
+                      </View>
+                    </View>
+                  ) : null}
+                </Card>
+              );
+            })
           )}
         </View>
 

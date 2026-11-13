@@ -42,6 +42,22 @@ class PillionProtocolTest {
     assertEquals("k2", n2.key)
     assertTrue(n2.canReply)
     assertEquals("See you | soon", n2.text)
+    assertEquals(1, n2.messages.size)
+    assertEquals("See you | soon", n2.messages[0])
+
+    val multiText = PillionProtocol.parse(
+      "NOTIF_ADD2|k3|com.whatsapp|1|Sam|Hey%0AAre you free?%0ACall me when you reach",
+      false
+    )
+    assertTrue(multiText is PillionPacket.NotificationAdd)
+    val n3 = (multiText as PillionPacket.NotificationAdd).notification
+    assertEquals("k3", n3.key)
+    assertTrue(n3.canReply)
+    assertEquals("Hey\nAre you free?\nCall me when you reach", n3.text)
+    assertEquals(3, n3.messages.size)
+    assertEquals("Hey", n3.messages[0])
+    assertEquals("Are you free?", n3.messages[1])
+    assertEquals("Call me when you reach", n3.messages[2])
   }
 
   @Test

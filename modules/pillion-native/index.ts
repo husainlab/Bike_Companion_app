@@ -23,6 +23,7 @@ export interface MirrorNotification {
   text: string;
   receivedAt: number;
   canReply: boolean;
+  messages?: string[];
 }
 
 export interface SyncedContact {

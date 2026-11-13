@@ -18,6 +18,7 @@ import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Parcelable
 import android.provider.ContactsContract
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -516,6 +517,80 @@ class PillionNotificationListener : NotificationListenerService() {
     return null
   }
 
+  private fun extractNotificationMessages(extras: Bundle?): List<String> {
+    if (extras == null) return emptyList()
+    val extracted = mutableListOf<String>()
+
+    // 1. Android MessagingStyle EXTRA_MESSAGES (used by WhatsApp, Google Messages, Signal, Telegram, etc.)
+    try {
+      val parcelables = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        extras.getParcelableArray(Notification.EXTRA_MESSAGES, Parcelable::class.java)
+      } else {
+        @Suppress("DEPRECATION")
+        extras.getParcelableArray(Notification.EXTRA_MESSAGES)
+      }
+      if (!parcelables.isNullOrEmpty()) {
+        for (item in parcelables) {
+          if (item is Bundle) {
+            val text = item.getCharSequence("text")?.toString()?.trim()
+            val sender = item.getCharSequence("sender")?.toString()?.trim()
+            if (!text.isNullOrEmpty()) {
+              val line = if (!sender.isNullOrEmpty()) "$sender: $text" else text
+              extracted.add(PillionProtocol.sanitizeField(line))
+            }
+          }
+        }
+      }
+    } catch (_: Exception) {}
+
+    // 2. EXTRA_TEXT_LINES (used by InboxStyle notifications: SMS, Gmail, etc.)
+    if (extracted.isEmpty()) {
+      try {
+        val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+        if (!lines.isNullOrEmpty()) {
+          for (line in lines) {
+            val str = line?.toString()?.trim()
+            if (!str.isNullOrEmpty()) {
+              extracted.add(PillionProtocol.sanitizeField(str))
+            }
+          }
+        }
+      } catch (_: Exception) {}
+    }
+
+    // 3. EXTRA_BIG_TEXT (used by BigTextStyle notifications)
+    if (extracted.isEmpty()) {
+      val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
+      if (!bigText.isNullOrEmpty()) {
+        val splitLines = bigText.split("\n", "\r").map { it.trim() }.filter { it.isNotEmpty() }
+        if (splitLines.size > 1) {
+          for (l in splitLines) {
+            extracted.add(PillionProtocol.sanitizeField(l))
+          }
+        } else {
+          extracted.add(PillionProtocol.sanitizeField(bigText))
+        }
+      }
+    }
+
+    // 4. Fallback to EXTRA_TEXT
+    if (extracted.isEmpty()) {
+      val singleText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+      if (!singleText.isNullOrEmpty()) {
+        val splitLines = singleText.split("\n", "\r").map { it.trim() }.filter { it.isNotEmpty() }
+        if (splitLines.size > 1) {
+          for (l in splitLines) {
+            extracted.add(PillionProtocol.sanitizeField(l))
+          }
+        } else {
+          extracted.add(PillionProtocol.sanitizeField(singleText))
+        }
+      }
+    }
+
+    return extracted
+  }
+
   override fun onNotificationPosted(sbn: StatusBarNotification) {
     val pkg = sbn.packageName
     if (pkg == packageName) return
@@ -574,7 +649,13 @@ class PillionNotificationListener : NotificationListenerService() {
 
     val key = PillionProtocol.escapeKey(sbn.key)
     val title = PillionProtocol.sanitizeField(rawTitle ?: "New Notification")
-    val text = PillionProtocol.sanitizeField(extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: "")
+    val messageList = extractNotificationMessages(extras)
+    val fullText = if (messageList.isNotEmpty()) {
+      messageList.joinToString("\n")
+    } else {
+      extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
+    }
+    val escapedText = PillionProtocol.escapeKey(fullText)
 
     val replyPair = findReplyAction(sbn.notification)
     trackedNotifications[key] = StoredNotificationEntry(
@@ -584,7 +665,8 @@ class PillionNotificationListener : NotificationListenerService() {
     )
 
     val canReplyFlag = if (replyPair != null) "1" else "0"
-    PillionStateStore.sendMessage("NOTIF_ADD2|$key|$pkg|$canReplyFlag|$title|$text")
+    PillionStateStore.applyPacket("NOTIF_ADD2|$key|$pkg|$canReplyFlag|$title|$escapedText", false)
+    PillionStateStore.sendMessage("NOTIF_ADD2|$key|$pkg|$canReplyFlag|$title|$escapedText")
   }
 
   override fun onNotificationRemoved(sbn: StatusBarNotification) {
