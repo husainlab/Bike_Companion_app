@@ -33,6 +33,7 @@ sealed class PillionPacket {
   data class Playing(val isPlaying: Boolean) : PillionPacket()
   data class Progress(val positionMs: Long, val durationMs: Long) : PillionPacket()
   data class Battery(val level: Int, val tempC: Int = -1) : PillionPacket()
+  data class Volume(val percent: Int) : PillionPacket()
   data class CallIncoming(val caller: String, val phoneNumber: String = "") : PillionPacket()
   data class CallActive(val caller: String = "", val phoneNumber: String = "") : PillionPacket()
   data class CallMute(val isMuted: Boolean) : PillionPacket()
@@ -117,6 +118,19 @@ object PillionProtocol {
     }
   }
 
+  fun formatDurationMs(ms: Long): String {
+    if (ms <= 0L) return "00:00"
+    val totalSec = ms / 1000L
+    val hours = totalSec / 3600L
+    val mins = (totalSec % 3600L) / 60L
+    val secs = totalSec % 60L
+    return if (hours > 0L) {
+      "%d:%02d:%02d".format(hours, mins, secs)
+    } else {
+      "%02d:%02d".format(mins, secs)
+    }
+  }
+
   fun parse(line: String, isSender: Boolean): PillionPacket? {
     val trimmed = line.trim()
     if (trimmed.isEmpty()) return null
@@ -143,6 +157,7 @@ object PillionProtocol {
           PillionPacket.Battery(level, temp)
         }
       }
+      "VOLUME" -> parts.getOrNull(1)?.toIntOrNull()?.let { PillionPacket.Volume(it) }
       "CALL_IN" -> parts.getOrNull(1)?.let {
         PillionPacket.CallIncoming(
           caller = it,
@@ -238,6 +253,7 @@ object PillionStateStore {
   @Volatile var isPlaying: Boolean = false
   @Volatile var progressMs: Long = 0L
   @Volatile var durationMs: Long = 0L
+  @Volatile var volumePercent: Int = 70
   @Volatile var batteryLevel: Int = -1
   @Volatile var batteryTempC: Int = -1
   @Volatile var isCallActive: Boolean = false
@@ -260,6 +276,7 @@ object PillionStateStore {
   @Volatile var notificationDismissHandler: ((String) -> Boolean)? = null
   @Volatile var notificationReplyHandler: ((String, String) -> Boolean)? = null
   @Volatile var callActionFallbackHandler: ((Boolean) -> Boolean)? = null
+  @Volatile var mediaSeekHandler: ((Long) -> Unit)? = null
 
   fun addListener(listener: () -> Unit) {
     listeners.add(listener)
@@ -373,6 +390,7 @@ object PillionStateStore {
     isPlaying = false
     progressMs = 0L
     durationMs = 0L
+    volumePercent = 70
     batteryLevel = -1
     batteryTempC = -1
     isCallActive = false
@@ -405,6 +423,9 @@ object PillionStateStore {
       is PillionPacket.Battery -> {
         batteryLevel = packet.level
         batteryTempC = packet.tempC
+      }
+      is PillionPacket.Volume -> {
+        volumePercent = packet.percent.coerceIn(0, 100)
       }
       is PillionPacket.CallIncoming -> {
         isCallActive = true

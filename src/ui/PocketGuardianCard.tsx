@@ -29,17 +29,20 @@ export function PocketGuardianCard({ companion, className }: PocketGuardianCardP
       tone="alert"
       className={`border ${isCritical ? 'border-danger/60' : 'border-warning/60'} gap-2 py-3 px-4 ${className ?? ''}`}
     >
-      <View className="flex-row items-center gap-2">
+      <View className="flex-row items-center gap-2 min-w-0">
         <Icon
           name={status.isOverheating || status.isWarm ? 'alert' : 'battery'}
           size={18}
           color={iconColor}
         />
-        <Text className={`font-mono-bold text-xs uppercase tracking-wider ${textColor} flex-1 min-w-0 break-words`}>
+        <Text
+          className={`font-mono-bold text-xs uppercase tracking-wider ${textColor} flex-1 min-w-0`}
+          numberOfLines={2}
+        >
           {status.alertTitle}
         </Text>
       </View>
-      <Text className="text-xs text-foreground-muted leading-relaxed break-words">
+      <Text className="text-xs text-foreground-muted leading-relaxed" numberOfLines={3}>
         {status.alertMessage}
       </Text>
     </Card>

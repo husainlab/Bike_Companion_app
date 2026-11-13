@@ -7,7 +7,13 @@ export interface TextProps extends RNTextProps {
   variant?: TextVariant;
 }
 
-export function Text({ className = '', style, variant, ...props }: TextProps) {
+export function Text({
+  className = '',
+  style,
+  variant,
+  textBreakStrategy = 'simple',
+  ...props
+}: TextProps) {
   const fontFamily = resolveFontFamily(className, variant);
   const hasColorClass = /\btext-(foreground|primary|on-primary|accent|on-accent|danger|warning|white|black)\b/.test(
     className
@@ -16,6 +22,7 @@ export function Text({ className = '', style, variant, ...props }: TextProps) {
 
   return (
     <RNText
+      textBreakStrategy={textBreakStrategy}
       {...props}
       className={combinedClass.trim()}
       style={[{ fontFamily }, style]}

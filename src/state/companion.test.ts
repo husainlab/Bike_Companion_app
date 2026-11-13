@@ -10,6 +10,7 @@ vi.mock('../../modules/pillion-native', () => ({
     isPlaying: false,
     progressMs: 0,
     durationMs: 0,
+    volumePercent: 70,
     batteryLevel: -1,
     batteryTempC: -1,
     currentSpeedKmh: 0,
@@ -34,12 +35,15 @@ vi.mock('react-native', () => ({
 }));
 
 import {
+  getVolumeHudState,
+  hideVolumeHud,
   initCompanionBridge,
   registerCompanionRideHandlers,
   resetCompanionBridgeForTests,
   setCompanionAutoStartOverlay,
   setCompanionAutoVolumeEnabled,
   shouldAutoStartOverlayOnConnect,
+  showVolumeHud,
   teardownPreviousRelayMode,
 } from './companion';
 import type { CompanionSnapshot, MirrorNotification } from '../../modules/pillion-native';
@@ -54,6 +58,7 @@ const mocks = vi.hoisted(() => ({
     isPlaying: false,
     progressMs: 0,
     durationMs: 0,
+    volumePercent: 70,
     batteryLevel: -1,
     batteryTempC: -1,
     currentSpeedKmh: 0,
@@ -251,5 +256,67 @@ describe('companion bridge ride handlers & lifecycle', () => {
       listener({ ...highwaySnapshot, currentSpeedKmh: 10 });
     }
     expect(mocks.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it('manages temporary volume HUD display and 2.5s auto-hide timer', () => {
+    vi.useFakeTimers();
+    try {
+      resetCompanionBridgeForTests();
+      expect(getVolumeHudState().visible).toBe(false);
+
+      showVolumeHud(85, false);
+      expect(getVolumeHudState()).toMatchObject({
+        visible: true,
+        percent: 85,
+        isAuto: false,
+      });
+
+      // Advance 1 second - still visible
+      vi.advanceTimersByTime(1000);
+      expect(getVolumeHudState().visible).toBe(true);
+
+      // Advance remaining 1.5 seconds - auto-dismisses
+      vi.advanceTimersByTime(1500);
+      expect(getVolumeHudState().visible).toBe(false);
+
+      // Manual hide works
+      showVolumeHud(50, true);
+      expect(getVolumeHudState().visible).toBe(true);
+      expect(getVolumeHudState().isAuto).toBe(true);
+      hideVolumeHud();
+      expect(getVolumeHudState().visible).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('triggers volume HUD when volumePercent in snapshot changes', async () => {
+    resetCompanionBridgeForTests();
+    await initCompanionBridge('receiver');
+
+    const snap1: CompanionSnapshot = {
+      ...mocks.snapshot,
+      connectionStatus: 'Connected',
+      volumePercent: 70,
+    };
+    for (const listener of mocks.listeners) {
+      listener(snap1);
+    }
+    // Same volume as initial snapshot does not trigger HUD
+    expect(getVolumeHudState().visible).toBe(false);
+
+    // Snapshot has volume change (e.g. from pocket phone or button)
+    const snap2: CompanionSnapshot = {
+      ...snap1,
+      volumePercent: 85,
+    };
+    for (const listener of mocks.listeners) {
+      listener(snap2);
+    }
+    expect(getVolumeHudState()).toMatchObject({
+      visible: true,
+      percent: 85,
+      isAuto: false,
+    });
   });
 });

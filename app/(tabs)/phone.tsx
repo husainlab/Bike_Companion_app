@@ -50,6 +50,11 @@ export default function PhoneScreen() {
   const [dialInput, setDialInput] = useState('');
   const [syncing, setSyncing] = useState(false);
 
+  const missedCallsCount = useMemo(
+    () => companion.recentCalls.filter((c) => c.callType === 3).length,
+    [companion.recentCalls]
+  );
+
   const filteredContacts = useMemo(
     () => filterContacts<ContactItem>(companion.contacts, searchQuery),
     [companion.contacts, searchQuery]
@@ -92,7 +97,7 @@ export default function PhoneScreen() {
         >
           <Icon name="refresh" size={14} color={palette.primary} />
           <Text className="font-mono-bold text-xs text-foreground">
-            {syncing ? 'SYNC...' : `${companion.contacts.length}`}
+            {syncing ? 'SYNCING...' : missedCallsCount > 0 ? `${missedCallsCount} MISSED` : 'SYNC'}
           </Text>
         </Press>
       }
@@ -114,7 +119,10 @@ export default function PhoneScreen() {
         <Segmented
           options={[
             { value: 'contacts', label: 'Contacts' },
-            { value: 'recents', label: 'Recents' },
+            {
+              value: 'recents',
+              label: missedCallsCount > 0 ? `Recents (${missedCallsCount})` : 'Recents',
+            },
             { value: 'keypad', label: 'Keypad' },
           ]}
           value={tab}
@@ -170,22 +178,22 @@ export default function PhoneScreen() {
                   key={contact.id}
                   onPress={() => handleDial(contact.phoneNumber, contact.name)}
                   haptic="confirm"
-                  className="flex-row items-center justify-between gap-3 rounded-md border-[1.5px] border-border bg-surface px-4 py-3.5"
+                  className="flex-row items-center justify-between gap-3 rounded-md border-[1.5px] border-border bg-surface px-4 py-3.5 min-h-[64px]"
                 >
-                  <View className="flex-1 min-w-0 gap-0.5">
-                    <View className="flex-row items-center gap-1.5">
+                  <View className="flex-1 min-w-0 gap-1 pr-2">
+                    <View className="flex-row items-center gap-1.5 flex-wrap">
                       {contact.isStarred ? (
                         <Icon name="star" size={14} color={palette.primary} />
                       ) : null}
-                      <Text className="font-bold text-base text-foreground flex-1 min-w-0 break-words" numberOfLines={1}>
+                      <Text className="font-bold text-base text-foreground flex-1 min-w-0 leading-tight" numberOfLines={2}>
                         {contact.name}
                       </Text>
                     </View>
-                    <Text className="font-mono text-xs text-foreground-muted break-words" numberOfLines={1}>
+                    <Text className="font-mono text-xs text-foreground-muted" numberOfLines={1}>
                       {contact.phoneNumber}
                     </Text>
                   </View>
-                  <View className="h-11 w-11 shrink-0 items-center justify-center rounded-sm border-[1.5px] border-accent bg-accent">
+                  <View className="h-12 w-12 shrink-0 items-center justify-center rounded-sm border-[1.5px] border-accent bg-accent">
                     <Icon name="phoneCall" size={20} color={palette.onPrimary} />
                   </View>
                 </Press>
@@ -221,21 +229,33 @@ export default function PhoneScreen() {
                     key={entry.id}
                     onPress={() => handleDial(entry.phoneNumber, entry.name)}
                     haptic="confirm"
-                    className="flex-row items-center justify-between gap-3 rounded-md border-[1.5px] border-border bg-surface px-4 py-3.5"
+                    className="flex-row items-center justify-between gap-3 rounded-md border-[1.5px] border-border bg-surface px-4 py-3.5 min-h-[68px]"
                   >
-                    <Icon
-                      name={callTypeIcon(entry.callType)}
-                      size={20}
-                      color={isMissed ? palette.danger : palette.accent}
-                    />
-                    <View className="flex-1 min-w-0 gap-0.5">
-                      <Text className="font-bold text-base text-foreground break-words" numberOfLines={1}>
+                    <View className="h-10 w-10 shrink-0 items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted">
+                      <Icon
+                        name={callTypeIcon(entry.callType)}
+                        size={18}
+                        color={isMissed ? palette.danger : palette.accent}
+                      />
+                    </View>
+                    <View className="flex-1 min-w-0 gap-0.5 pr-2">
+                      <Text className="font-bold text-base text-foreground leading-tight" numberOfLines={2}>
                         {entry.name || entry.phoneNumber}
                       </Text>
-                      <Text className="font-mono text-xs text-foreground-muted break-words" numberOfLines={1}>
-                        {formatCallTypeLabel(entry.callType)} • {entry.phoneNumber} •{' '}
-                        {entry.timestampMs > 0 ? formatRelativeTime(entry.timestampMs) : 'recent'}
-                      </Text>
+                      <View className="flex-row items-center gap-1.5 flex-wrap">
+                        <Text className={`font-mono text-xs ${isMissed ? 'text-danger' : 'text-accent'}`}>
+                          {formatCallTypeLabel(entry.callType).toUpperCase()}
+                        </Text>
+                        <Text className="font-mono text-xs text-foreground-muted">•</Text>
+                        <Text className="font-mono text-xs text-foreground-muted" numberOfLines={1}>
+                          {entry.phoneNumber}
+                        </Text>
+                      </View>
+                      {entry.timestampMs > 0 ? (
+                        <Text className="font-mono text-[11px] text-foreground-muted">
+                          {formatRelativeTime(entry.timestampMs)}
+                        </Text>
+                      ) : null}
                     </View>
                     <View className="h-11 w-11 shrink-0 items-center justify-center rounded-sm border-[1.5px] border-border bg-surface-muted">
                       <Icon name="phoneCall" size={18} color={palette.accent} />

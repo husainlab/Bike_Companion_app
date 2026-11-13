@@ -66,9 +66,11 @@ export default function SettingsScreen() {
           />
 
           <View className="flex-row items-center justify-between pt-2">
-            <View className="flex-1 pr-3">
-              <Text className="font-bold text-base text-foreground">Keep screen awake</Text>
-              <Text className="text-xs text-foreground-muted">
+            <View className="flex-1 pr-3 min-w-0">
+              <Text className="font-bold text-base text-foreground leading-snug" numberOfLines={2}>
+                Keep screen awake
+              </Text>
+              <Text className="text-xs text-foreground-muted leading-normal" numberOfLines={2}>
                 Prevents screen timeout while in Handlebar mode
               </Text>
             </View>
@@ -83,11 +85,11 @@ export default function SettingsScreen() {
           </View>
 
           <View className="flex-row items-center justify-between pt-1">
-            <View className="flex-1 pr-3">
-              <Text className="font-bold text-base text-foreground">
+            <View className="flex-1 pr-3 min-w-0">
+              <Text className="font-bold text-base text-foreground leading-snug" numberOfLines={2}>
                 Auto-start overlay on connect
               </Text>
-              <Text className="text-xs text-foreground-muted">
+              <Text className="text-xs text-foreground-muted leading-normal" numberOfLines={2}>
                 Requires Display Over Apps permission
               </Text>
             </View>
@@ -104,11 +106,11 @@ export default function SettingsScreen() {
           </View>
 
           <View className="flex-row items-center justify-between pt-3 border-t border-border">
-            <View className="flex-1 pr-3">
-              <Text className="font-bold text-base text-foreground">
+            <View className="flex-1 pr-3 min-w-0">
+              <Text className="font-bold text-base text-foreground leading-snug" numberOfLines={2}>
                 Speed-sensitive auto volume
               </Text>
-              <Text className="text-xs text-foreground-muted">
+              <Text className="text-xs text-foreground-muted leading-normal" numberOfLines={2}>
                 Compensates for helmet wind noise at highway speeds
               </Text>
             </View>

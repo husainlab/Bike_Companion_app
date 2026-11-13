@@ -754,11 +754,29 @@ class PillionNativeModule : Module() {
           audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PREVIOUS))
           audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PREVIOUS))
         }
+        path.startsWith("/media/seek|") -> {
+          val targetMs = path.removePrefix("/media/seek|").toLongOrNull() ?: 0L
+          PillionStateStore.progressMs = targetMs
+          PillionStateStore.mediaSeekHandler?.invoke(targetMs)
+          PillionStateStore.notifyChanged()
+        }
         path == "/volume/up" -> {
           audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+          val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+          val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+          val pct = if (max > 0) ((cur.toDouble() / max.toDouble()) * 100.0).roundToInt() else 0
+          PillionStateStore.volumePercent = pct
+          PillionStateStore.sendMessage("VOLUME|$pct")
+          PillionStateStore.notifyChanged()
         }
         path == "/volume/down" -> {
           audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+          val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+          val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+          val pct = if (max > 0) ((cur.toDouble() / max.toDouble()) * 100.0).roundToInt() else 0
+          PillionStateStore.volumePercent = pct
+          PillionStateStore.sendMessage("VOLUME|$pct")
+          PillionStateStore.notifyChanged()
         }
       }
     } catch (_: Exception) {}
@@ -773,6 +791,7 @@ class PillionNativeModule : Module() {
     "isPlaying" to PillionStateStore.isPlaying,
     "progressMs" to PillionStateStore.progressMs.toDouble(),
     "durationMs" to PillionStateStore.durationMs.toDouble(),
+    "volumePercent" to PillionStateStore.volumePercent,
     "batteryLevel" to PillionStateStore.batteryLevel,
     "batteryTempC" to PillionStateStore.batteryTempC,
     "currentSpeedKmh" to currentGpsSpeedKmh,

@@ -83,6 +83,7 @@ import {
   getPairedBluetoothDevices,
   launchLocalGoogleMaps,
   replyToMirroredNotification,
+  seekMediaPosition,
   sendCockpitCommand,
   setCompanionRelayRole,
   setNativeAutoStartOverlay,
@@ -100,6 +101,9 @@ describe('companion native data adapter', () => {
 
     await sendCockpitCommand('/call/mute');
     expect(mocks.sendCommand).toHaveBeenCalledWith('/call/mute');
+
+    await seekMediaPosition(45000);
+    expect(mocks.sendCommand).toHaveBeenCalledWith('/media/seek|45000');
   });
 
   it('forwards commands with trimmed inputs and guards blank numbers/replies', async () => {

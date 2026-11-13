@@ -73,6 +73,7 @@ export async function sendCockpitCommand(
     | '/media/playpause'
     | '/media/next'
     | '/media/prev'
+    | `/media/seek|${number}`
     | '/volume/up'
     | '/volume/down'
     | '/call/answer'
@@ -85,6 +86,11 @@ export async function sendCockpitCommand(
     | `/notif/reply|${string}|${string}`
 ): Promise<void> {
   await PillionNative?.sendCommand(path);
+}
+
+export async function seekMediaPosition(positionMs: number): Promise<void> {
+  const clamped = Math.max(0, Math.round(positionMs));
+  await sendCockpitCommand(`/media/seek|${clamped}`);
 }
 
 export async function dialContactNumber(phoneNumber: string): Promise<void> {

@@ -179,10 +179,22 @@ class PillionNotificationListener : NotificationListenerService() {
 
   override fun onDestroy() {
     teardownCallListener()
+    PillionStateStore.mediaSeekHandler = null
     super.onDestroy()
   }
 
   private fun registerHandlers() {
+    PillionStateStore.mediaSeekHandler = { targetMs ->
+      try {
+        val componentName = ComponentName(this, this::class.java)
+        val controllers = mediaSessionManager?.getActiveSessions(componentName)
+        val bestController = controllers?.find { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+          ?: controllers?.find { it.metadata != null }
+          ?: controllers?.firstOrNull()
+        bestController?.transportControls?.seekTo(targetMs)
+      } catch (_: Exception) {}
+    }
+
     PillionStateStore.notificationDismissHandler = { escapedKey ->
       val rawKey = trackedNotifications[escapedKey]?.rawKey ?: PillionProtocol.unescapeKey(escapedKey)
       try {

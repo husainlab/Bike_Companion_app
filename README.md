@@ -7,7 +7,9 @@ A two-phone Android riding cockpit designed for motorcyclists. Keep your primary
 ## Key Features
 
 - **Controls-Only Architecture**: Zero audio or call routing through the handlebar phone. Your helmet intercom (Cardo, Sena) stays paired directly to your pocket phone for maximum audio quality and zero lag.
-- **Speed-Sensitive Auto-Volume**: Automatically compensates for motorcycle wind noise using offline hardware GPS speed, featuring a 3-second anti-flutter hysteresis filter and active call suppression.
+- **Speed-Sensitive Auto-Volume & Volume HUD**: Automatically compensates for motorcycle wind noise using offline hardware GPS speed, featuring a 3-second anti-flutter hysteresis filter and active call suppression. A high-visibility temporary volume HUD pops up on any volume button press or auto-volume transition and auto-dismisses after 2.5s.
+- **Seekable Media Progress Bar**: Scrub and seek forwards and backwards through tracks directly on the cockpit deck or the floating overlay widget.
+- **Actionable Badges & Clean Layout**: Distraction-free interface where badge counts only appear when actionable items exist (missed calls or active unread notifications), with robust multi-line text wrapping for glove touch targets.
 - **Pocket Phone Guardian**: Real-time battery level and thermal watchdog beaming battery temperature and percentage over Bluetooth, with instant high-visibility alerts if your pocket phone overheats or drops below 15%.
 - **Call Management HUD**: Answer, decline, or one-touch **Mute** calls directly from your handlebars or floating overlay, complete with a live elapsed call counter (`MM:SS`) and automatic safety mic un-mute on hangup.
 - **Auto-Start Floating Overlay**: Draggable cockpit overlay bubble launches automatically over Google Maps whenever the handlebar phone connects to your pocket phone.

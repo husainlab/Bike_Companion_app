@@ -14,6 +14,7 @@ class PillionProtocolTest {
     assertEquals(PillionPacket.Playing(true), PillionProtocol.parse("PLAYING|1", false))
     assertEquals(PillionPacket.Battery(84, -1), PillionProtocol.parse("BATTERY|84", false))
     assertEquals(PillionPacket.Battery(84, 42), PillionProtocol.parse("BATTERY|84|42", false))
+    assertEquals(PillionPacket.Volume(80), PillionProtocol.parse("VOLUME|80", false))
     assertEquals(PillionPacket.Progress(12000L, 258000L), PillionProtocol.parse("PROGRESS|12000|258000", false))
   }
 
@@ -137,6 +138,11 @@ class PillionProtocolTest {
     assertEquals("00:45", PillionProtocol.formatCallElapsed(1000L, 46_000L))
     assertEquals("02:05", PillionProtocol.formatCallElapsed(1000L, 126_000L))
     assertEquals("1:02:05", PillionProtocol.formatCallElapsed(1000L, 3_726_000L))
+
+    assertEquals("00:00", PillionProtocol.formatDurationMs(0L))
+    assertEquals("00:00", PillionProtocol.formatDurationMs(-100L))
+    assertEquals("01:15", PillionProtocol.formatDurationMs(75_000L))
+    assertEquals("1:01:15", PillionProtocol.formatDurationMs(3_675_000L))
   }
 
   @Test

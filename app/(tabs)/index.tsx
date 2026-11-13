@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -6,7 +6,6 @@ import {
   setRelayMode,
 } from '@/actions/cockpit';
 import {
-  clampProgress,
   filterContacts,
   formatBatteryLabel,
   isBatteryLow,
@@ -19,6 +18,7 @@ import {
   launchLocalGoogleMaps,
   openNotificationAccessSettings,
   openOverlayPermissionSettings,
+  seekMediaPosition,
   sendCockpitCommand,
   startCockpitOverlay,
   startSenderServer,
@@ -32,14 +32,17 @@ import { getStore, useAppState } from '@/state/app';
 import {
   initCompanionBridge,
   refreshCompanionSnapshot,
+  showVolumeHud,
   teardownPreviousRelayMode,
   useCompanionState,
+  useVolumeHud,
 } from '@/state/companion';
 import { Button } from '@/ui/Button';
 import { CallHudCard } from '@/ui/CallHudCard';
 import { Card } from '@/ui/Card';
 import { PocketGuardianCard } from '@/ui/PocketGuardianCard';
 import { Icon } from '@/ui/Icon';
+import { MediaSeekBar } from '@/ui/MediaSeekBar';
 import { getPalette } from '@/ui/palette';
 import { Press } from '@/ui/Press';
 import { Segmented } from '@/ui/Segmented';
@@ -48,6 +51,7 @@ import { ScreenScroll } from '@/ui/shells/ScreenScroll';
 import { UpdateCard } from '@/ui/shells/UpdateCard';
 import { Text } from '@/ui/Text';
 import { showToast } from '@/ui/Toast';
+import { VolumeHudCard } from '@/ui/VolumeHudCard';
 
 export default function CockpitScreen() {
   const router = useRouter();
@@ -55,9 +59,22 @@ export default function CockpitScreen() {
   const isWide = width >= 700;
   const { settings } = useAppState();
   const companion = useCompanionState();
+  const volumeHud = useVolumeHud();
   const palette = getPalette(settings.theme);
 
+  const [seekingInfo, setSeekingInfo] = useState<{ isSeeking: boolean; seekMs: number }>({
+    isSeeking: false,
+    seekMs: 0,
+  });
+
   const favoriteContacts = filterContacts(companion.contacts, '').slice(0, 4);
+
+  const handleVolumeAdjust = async (direction: 'up' | 'down') => {
+    const cur = companion.volumePercent || 70;
+    const next = direction === 'up' ? Math.min(100, cur + 7) : Math.max(0, cur - 7);
+    showVolumeHud(next, false);
+    await sendCockpitCommand(direction === 'up' ? '/volume/up' : '/volume/down');
+  };
 
   const badge = resolveLinkBadge(
     companion.connectionStatus,
@@ -74,7 +91,6 @@ export default function CockpitScreen() {
           ? palette.warning
           : palette.foregroundMuted;
 
-  const progress = clampProgress(companion.progressMs, companion.durationMs);
   const lowBattery = isBatteryLow(companion.batteryLevel);
 
   const handleModeChange = async (mode: RelayMode) => {
@@ -146,33 +162,27 @@ export default function CockpitScreen() {
       title="Pillion"
       eyebrow={settings.relayMode === 'receiver' ? 'HANDLEBAR DISPLAY' : 'POCKET RELAY'}
       rightSlot={
-        <View className="flex-row items-center gap-2">
+        <View className="flex-row items-center gap-1.5 rounded-xs border-[1.5px] border-border bg-surface px-2.5 py-1.5 shrink-0">
           <View
-            style={{ borderColor: badgeColor }}
-            className="flex-row items-center gap-1.5 rounded-xs border-[1.5px] bg-surface px-2.5 py-1.5"
+            style={{ backgroundColor: badgeColor }}
+            className="h-2 w-2 rounded-full"
+          />
+          <Text style={{ color: badgeColor }} className="font-mono-bold text-xs">
+            {badge.label}
+          </Text>
+          <Text className="font-mono text-xs text-foreground-muted">•</Text>
+          <Icon
+            name="battery"
+            size={13}
+            color={lowBattery ? palette.danger : palette.foreground}
+          />
+          <Text
+            className={`font-mono-bold text-xs ${
+              lowBattery ? 'text-danger' : 'text-foreground'
+            }`}
           >
-            <View
-              style={{ backgroundColor: badgeColor }}
-              className="h-2 w-2 rounded-full"
-            />
-            <Text style={{ color: badgeColor }} className="font-mono-bold text-xs">
-              {badge.label}
-            </Text>
-          </View>
-          <View className="flex-row items-center gap-1 rounded-xs border-[1.5px] border-border bg-surface px-2.5 py-1.5">
-            <Icon
-              name="battery"
-              size={14}
-              color={lowBattery ? palette.danger : palette.foreground}
-            />
-            <Text
-              className={`font-mono-bold text-xs ${
-                lowBattery ? 'text-danger' : 'text-foreground'
-              }`}
-            >
-              {formatBatteryLabel(companion.batteryLevel)}
-            </Text>
-          </View>
+            {formatBatteryLabel(companion.batteryLevel)}
+          </Text>
         </View>
       }
     >
@@ -196,9 +206,9 @@ export default function CockpitScreen() {
             <View className={isWide ? 'flex-row items-start gap-4' : 'gap-4'}>
               {/* Asymmetric sunlight-readable Media Deck */}
               <Card className={isWide ? 'flex-1 gap-4' : 'gap-4'}>
-                <View className="flex-row items-start justify-between gap-3">
-                  <View className="flex-1 min-w-0 pr-2 gap-0.5">
-                    <View className="flex-row items-center gap-2">
+                <View className="gap-2">
+                  <View className="flex-row items-center justify-between gap-2">
+                    <View className="flex-row items-center gap-2 flex-wrap flex-1 min-w-0">
                       <Text className="font-mono text-xs uppercase tracking-widest text-foreground-muted">
                         NOW PLAYING
                       </Text>
@@ -210,27 +220,40 @@ export default function CockpitScreen() {
                         </View>
                       ) : null}
                     </View>
-                    <Text className="font-bold text-2xl text-foreground leading-tight break-words" numberOfLines={2}>
+                    {companion.durationMs > 0 ? (
+                      <Text
+                        className={`font-mono-bold text-sm shrink-0 ${
+                          seekingInfo.isSeeking ? 'text-accent' : 'text-primary'
+                        }`}
+                      >
+                        {formatDurationMs(
+                          seekingInfo.isSeeking ? seekingInfo.seekMs : companion.progressMs
+                        )}{' '}
+                        / {formatDurationMs(companion.durationMs)}
+                      </Text>
+                    ) : null}
+                  </View>
+
+                  <View className="gap-0.5 min-w-0">
+                    <Text className="font-bold text-2xl text-foreground leading-tight" numberOfLines={2}>
                       {companion.songTitle}
                     </Text>
-                    <Text className="text-base text-foreground-muted break-words" numberOfLines={1}>
+                    <Text className="text-base text-foreground-muted leading-snug" numberOfLines={2}>
                       {companion.artistName}
                     </Text>
                   </View>
-                  {companion.durationMs > 0 ? (
-                    <Text className="font-mono-bold text-sm text-primary shrink-0 text-right pt-0.5">
-                      {formatDurationMs(companion.progressMs)} /{' '}
-                      {formatDurationMs(companion.durationMs)}
-                    </Text>
-                  ) : null}
                 </View>
 
-                <View className="h-2 w-full overflow-hidden rounded-xs bg-surface-muted">
-                  <View
-                    style={{ width: `${Math.round(progress * 100)}%` }}
-                    className="h-full bg-primary"
-                  />
-                </View>
+                <MediaSeekBar
+                  progressMs={companion.progressMs}
+                  durationMs={companion.durationMs}
+                  onSeek={(targetMs) => {
+                    void seekMediaPosition(targetMs);
+                  }}
+                  onSeekingChange={(isSeeking, currentSeekMs) => {
+                    setSeekingInfo({ isSeeking, seekMs: currentSeekMs });
+                  }}
+                />
 
                 {/* Oversized glove-friendly asymmetric transport controls */}
                 <View className="flex-row gap-2.5">
@@ -265,13 +288,20 @@ export default function CockpitScreen() {
                   </Press>
                 </View>
 
+                <VolumeHudCard
+                  visible={volumeHud.visible}
+                  percent={volumeHud.percent}
+                  isAuto={volumeHud.isAuto}
+                  speedKmh={companion.currentSpeedKmh}
+                />
+
                 <View className="flex-row gap-2.5">
                   <Button
                     label="Vol -"
                     icon="volumeMute"
                     tone="surface"
                     compact
-                    onPress={() => sendCockpitCommand('/volume/down')}
+                    onPress={() => handleVolumeAdjust('down')}
                     className="flex-1"
                   />
                   <Button
@@ -279,7 +309,7 @@ export default function CockpitScreen() {
                     icon="volume"
                     tone="surface"
                     compact
-                    onPress={() => sendCockpitCommand('/volume/up')}
+                    onPress={() => handleVolumeAdjust('up')}
                     className="flex-1"
                   />
                 </View>
@@ -321,7 +351,7 @@ export default function CockpitScreen() {
                 <Card className="gap-3">
                   <View className="flex-row items-center justify-between">
                     <Text className="font-mono text-xs uppercase tracking-widest text-foreground-muted">
-                      QUICK DIAL ({companion.contacts.length} SYNCED)
+                      QUICK DIAL
                     </Text>
                     <Press
                       onPress={() => router.push('/(tabs)/phone')}
@@ -344,12 +374,16 @@ export default function CockpitScreen() {
                             showToast(`Dialing ${contact.name} on Pocket Phone`, 'success');
                           }}
                           haptic="confirm"
-                          className="min-w-[46%] flex-1 flex-row items-center gap-2 rounded-sm border-[1.5px] border-border bg-surface-muted px-3 py-2.5"
+                          className="min-w-[46%] flex-1 flex-row items-center gap-2.5 rounded-sm border-[1.5px] border-border bg-surface-muted px-3 py-3 min-h-[58px]"
                         >
-                          <Icon name="phoneCall" size={16} color={palette.accent} />
-                          <Text className="font-bold text-sm text-foreground flex-1" numberOfLines={1}>
-                            {contact.name}
-                          </Text>
+                          <View className="h-8 w-8 rounded-full items-center justify-center bg-accent/15 border border-accent/40 shrink-0">
+                            <Icon name="phoneCall" size={14} color={palette.accent} />
+                          </View>
+                          <View className="flex-1 min-w-0">
+                            <Text className="font-bold text-sm text-foreground leading-tight" numberOfLines={2}>
+                              {contact.name}
+                            </Text>
+                          </View>
                         </Press>
                       ))}
                     </View>
@@ -488,7 +522,7 @@ export default function CockpitScreen() {
                 onPress={() => openNotificationAccessSettings()}
               />
               <Button
-                label={`Sync Contacts & Recents (${companion.contacts.length})`}
+                label="Sync Contacts & Recents"
                 icon="users"
                 tone="surface"
                 compact

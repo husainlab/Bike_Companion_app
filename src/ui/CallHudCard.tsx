@@ -41,43 +41,49 @@ export function CallHudCard({ companion, className }: CallHudCardProps) {
 
   return (
     <Card tone="alert" className={`gap-4 ${className ?? ''}`}>
-      <View className="flex-row items-center justify-between">
-        <View className="flex-row items-center gap-2">
+      <View className="flex-row items-center justify-between gap-2">
+        <View className="flex-row items-center gap-2 flex-1 min-w-0">
           <Icon
             name={companion.isCallIncoming ? 'phoneIncoming' : companion.isCallMuted ? 'micOff' : 'phoneCall'}
             size={20}
             color={companion.isCallIncoming ? palette.danger : companion.isCallMuted ? palette.accent : palette.primary}
           />
-          <Text
-            className={`font-mono-bold text-xs uppercase tracking-widest ${
-              companion.isCallIncoming
-                ? 'text-danger'
+          <View className="flex-1 min-w-0">
+            <Text
+              className={`font-mono-bold text-xs uppercase tracking-widest ${
+                companion.isCallIncoming
+                  ? 'text-danger'
+                  : companion.isCallMuted
+                    ? 'text-accent'
+                    : 'text-primary'
+              }`}
+              numberOfLines={1}
+            >
+              {companion.isCallIncoming
+                ? 'INCOMING CALL'
                 : companion.isCallMuted
-                  ? 'text-accent'
-                  : 'text-primary'
-            }`}
-          >
-            {companion.isCallIncoming
-              ? 'INCOMING CALL'
-              : companion.isCallMuted
-                ? 'CALL MUTED • POCKET AUDIO'
-                : 'ACTIVE CALL • POCKET AUDIO'}
-          </Text>
+                  ? 'CALL MUTED'
+                  : 'ACTIVE CALL'}
+            </Text>
+            <Text className="font-mono text-[10px] text-foreground-muted" numberOfLines={1}>
+              AUDIO ON POCKET PHONE / INTERCOM
+            </Text>
+          </View>
         </View>
 
         {isLiveCall ? (
-          <View className="rounded border border-border bg-surface-muted px-2 py-0.5">
-            <Text className="font-mono text-xs text-primary">{elapsed}</Text>
+          <View className="rounded border border-border bg-surface-muted px-2.5 py-1 shrink-0">
+            <Text className="font-mono-bold text-xs text-primary">{elapsed}</Text>
           </View>
         ) : null}
       </View>
 
       <View className="gap-0.5 min-w-0">
-        <Text className="font-bold text-2xl text-foreground leading-tight break-words" numberOfLines={2}>
+        <Text className="font-bold text-2xl text-foreground leading-tight" numberOfLines={2}>
           {callerDisplay}
         </Text>
         {showNumber ? (
-          <Text className="font-mono text-sm text-foreground-muted break-words" numberOfLines={1}>
+          <Text className="font-mono text-sm text-foreground-muted" numberOfLines={1}>
             {companion.callerNumber}
           </Text>
         ) : null}

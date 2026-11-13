@@ -19,6 +19,13 @@ export interface CompanionRideHandlers {
   onAutoStartOverlay?: () => void;
 }
 
+export interface VolumeHudState {
+  visible: boolean;
+  percent: number;
+  isAuto: boolean;
+  updatedAt: number;
+}
+
 let snapshot: CompanionSnapshot = EMPTY_SNAPSHOT;
 const listeners = new Set<() => void>();
 let started = false;
@@ -30,6 +37,71 @@ let autoStartOverlayEnabled = false;
 let autoVolumeEnabled = false;
 let currentSpeedVolumeBracket = 0;
 let lastSpeedVolumeTransitionMs = 0;
+let prevVolumePercent = -1;
+
+let volumeHudState: VolumeHudState = {
+  visible: false,
+  percent: 70,
+  isAuto: false,
+  updatedAt: 0,
+};
+const volumeHudListeners = new Set<() => void>();
+let volumeHudTimer: ReturnType<typeof setTimeout> | null = null;
+
+function emitVolumeHud(): void {
+  for (const listener of volumeHudListeners) {
+    listener();
+  }
+}
+
+export function showVolumeHud(percent: number, isAuto: boolean = false): void {
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+  volumeHudState = {
+    visible: true,
+    percent: clamped,
+    isAuto,
+    updatedAt: Date.now(),
+  };
+  emitVolumeHud();
+  if (volumeHudTimer) {
+    clearTimeout(volumeHudTimer);
+  }
+  volumeHudTimer = setTimeout(() => {
+    volumeHudState = {
+      ...volumeHudState,
+      visible: false,
+    };
+    emitVolumeHud();
+  }, 2500);
+}
+
+export function hideVolumeHud(): void {
+  if (volumeHudTimer) {
+    clearTimeout(volumeHudTimer);
+    volumeHudTimer = null;
+  }
+  if (!volumeHudState.visible) return;
+  volumeHudState = {
+    ...volumeHudState,
+    visible: false,
+  };
+  emitVolumeHud();
+}
+
+export function getVolumeHudState(): VolumeHudState {
+  return volumeHudState;
+}
+
+export function subscribeVolumeHud(listener: () => void): () => void {
+  volumeHudListeners.add(listener);
+  return () => {
+    volumeHudListeners.delete(listener);
+  };
+}
+
+export function useVolumeHud(): VolumeHudState {
+  return useSyncExternalStore(subscribeVolumeHud, getVolumeHudState, getVolumeHudState);
+}
 
 export function setCompanionAutoVolumeEnabled(enabled: boolean): void {
   autoVolumeEnabled = enabled;
@@ -78,6 +150,17 @@ export function resetCompanionBridgeForTests(): void {
   autoVolumeEnabled = false;
   currentSpeedVolumeBracket = 0;
   lastSpeedVolumeTransitionMs = 0;
+  prevVolumePercent = -1;
+  if (volumeHudTimer) {
+    clearTimeout(volumeHudTimer);
+    volumeHudTimer = null;
+  }
+  volumeHudState = {
+    visible: false,
+    percent: 70,
+    isAuto: false,
+    updatedAt: 0,
+  };
 }
 
 function handleSnapshotTransition(next: CompanionSnapshot): void {
@@ -90,6 +173,12 @@ function handleSnapshotTransition(next: CompanionSnapshot): void {
     activeRelayMode
   );
   prevStatus = next.connectionStatus;
+
+  const currentVol = next.volumePercent;
+  if (prevVolumePercent !== -1 && currentVol !== prevVolumePercent) {
+    showVolumeHud(currentVol, false);
+  }
+  prevVolumePercent = currentVol;
 
   if (shouldAutoStart) {
     rideHandlers.onAutoStartOverlay?.();
@@ -115,6 +204,9 @@ function handleSnapshotTransition(next: CompanionSnapshot): void {
       if (result.shouldUpdateBracket) {
         currentSpeedVolumeBracket = result.targetBracket;
         lastSpeedVolumeTransitionMs = now;
+        const delta = result.action === 'volume_up' ? result.steps * 7 : -result.steps * 7;
+        const estPct = Math.max(0, Math.min(100, (next.volumePercent || 70) + delta));
+        showVolumeHud(estPct, true);
         if (result.action === 'volume_up') {
           for (let i = 0; i < result.steps; i++) {
             void sendCockpitCommand('/volume/up');

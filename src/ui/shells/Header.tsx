@@ -26,24 +26,24 @@ export function Header({ title, eyebrow, onBack, rightSlot }: HeaderProps) {
       className="border-b-[1.5px] border-border bg-background px-4 pb-3"
     >
       <View className="flex-row items-center justify-between gap-3">
-        <View className="flex-row items-center gap-3 flex-1">
+        <View className="flex-row items-center gap-3 flex-1 min-w-0">
           {onBack ? (
             <Press
               onPress={onBack}
               accessibilityRole="button"
               accessibilityLabel="Go back"
-              className="h-12 w-12 items-center justify-center rounded-sm border-[1.5px] border-border bg-surface"
+              className="h-12 w-12 items-center justify-center rounded-sm border-[1.5px] border-border bg-surface shrink-0"
             >
               <Icon name="back" size={20} color={palette.foreground} />
             </Press>
           ) : (
-            <View className="h-10 w-10 items-center justify-center rounded-sm border-[1.5px] border-border bg-surface">
+            <View className="h-10 w-10 items-center justify-center rounded-sm border-[1.5px] border-border bg-surface shrink-0">
               <PillionMark size={24} color={palette.primary} />
             </View>
           )}
-          <View className="flex-1">
+          <View className="flex-1 min-w-0">
             {eyebrow ? (
-              <Text className="font-mono text-xs uppercase tracking-widest text-foreground-muted">
+              <Text className="font-mono text-xs uppercase tracking-widest text-foreground-muted" numberOfLines={1}>
                 {eyebrow}
               </Text>
             ) : null}
@@ -52,7 +52,7 @@ export function Header({ title, eyebrow, onBack, rightSlot }: HeaderProps) {
             </Text>
           </View>
         </View>
-        {rightSlot ? <View>{rightSlot}</View> : null}
+        {rightSlot ? <View className="shrink-0">{rightSlot}</View> : null}
       </View>
     </View>
   );

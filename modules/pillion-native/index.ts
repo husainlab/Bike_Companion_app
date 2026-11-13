@@ -49,6 +49,7 @@ export interface CompanionSnapshot {
   isPlaying: boolean;
   progressMs: number;
   durationMs: number;
+  volumePercent: number;
   batteryLevel: number;
   batteryTempC: number;
   currentSpeedKmh: number;
@@ -104,6 +105,7 @@ export const EMPTY_SNAPSHOT: CompanionSnapshot = {
   isPlaying: false,
   progressMs: 0,
   durationMs: 0,
+  volumePercent: 70,
   batteryLevel: -1,
   batteryTempC: -1,
   currentSpeedKmh: 0,

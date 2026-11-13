@@ -69,15 +69,18 @@ export function Button({
       accessibilityRole="button"
       accessibilityLabel={label}
       className={`flex-row items-center justify-center rounded-sm border-[1.5px] ${
-        compact ? 'min-h-12 px-4 py-2' : 'min-h-hit px-5 py-3.5'
+        compact ? 'min-h-12 px-3 py-2' : 'min-h-hit px-4 py-3'
       } ${containerStyle} ${className}`.trim()}
     >
       {loading ? (
         <ActivityIndicator size="small" color={iconColor} />
       ) : (
-        <View className="flex-row items-center gap-2">
+        <View className="flex-row items-center justify-center gap-2 flex-1 min-w-0">
           {icon ? <Icon name={icon} size={compact ? 18 : 20} color={iconColor} /> : null}
-          <Text className={`font-bold ${compact ? 'text-sm' : 'text-base'} ${textClass}`}>
+          <Text
+            className={`font-bold text-center shrink ${compact ? 'text-sm' : 'text-base'} ${textClass}`}
+            numberOfLines={2}
+          >
             {label}
           </Text>
         </View>

@@ -27,6 +27,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -57,7 +58,8 @@ class PillionOverlayService : Service() {
     val callerNumber: String,
     val keypadText: String,
     val hasDuration: Boolean,
-    val contactsCount: Int,
+    val missedCallsCount: Int,
+    val alertsCount: Int,
     val contactsStamp: Int,
     val recentsStamp: Int,
     val alertsStamp: Int,
@@ -77,6 +79,9 @@ class PillionOverlayService : Service() {
   private var lastSeenNotifKey: String? = null
   private var prevCallActive = false
   private var prevCallIncoming = false
+  private var prevVolumePercent = -1
+  private var isVolumeHudVisible = false
+  private var isUserSeeking = false
   private var lastSignature: RenderSignature? = null
 
   private var headerLiveBadge: TextView? = null
@@ -85,13 +90,32 @@ class PillionOverlayService : Service() {
   private var collapsedTitleView: TextView? = null
   private var mediaTitleView: TextView? = null
   private var mediaArtistView: TextView? = null
-  private var mediaProgressView: ProgressBar? = null
+  private var mediaTimeView: TextView? = null
+  private var mediaProgressView: SeekBar? = null
   private var mediaPlayPauseButton: TextView? = null
   private var callTimerView: TextView? = null
+  private var volumeHudContainer: LinearLayout? = null
+  private var volumeHudBar: ProgressBar? = null
+  private var volumeHudLabel: TextView? = null
 
   private val hidePopupRunnable = Runnable {
     popupNotification = null
     render()
+  }
+
+  private val hideVolumeRunnable = Runnable {
+    isVolumeHudVisible = false
+    volumeHudContainer?.visibility = View.GONE
+  }
+
+  private fun showVolumeHud(pct: Int, isAuto: Boolean = false) {
+    mainHandler.removeCallbacks(hideVolumeRunnable)
+    isVolumeHudVisible = true
+    val autoTag = if (isAuto) " (AUTO)" else ""
+    volumeHudLabel?.text = "VOLUME $pct%$autoTag"
+    volumeHudBar?.progress = pct
+    volumeHudContainer?.visibility = View.VISIBLE
+    mainHandler.postDelayed(hideVolumeRunnable, 2500L)
   }
 
   private val callTimerRunnable: Runnable = object : Runnable {
@@ -105,7 +129,7 @@ class PillionOverlayService : Service() {
     if (isExpanded && PillionStateStore.isCallActive && !PillionStateStore.isCallIncoming && PillionStateStore.callStartedAtMs > 0L) {
       val elapsed = PillionProtocol.formatCallElapsed(PillionStateStore.callStartedAtMs)
       val mutedTag = if (PillionStateStore.isCallMuted) " • MUTED" else ""
-      callTimerView?.text = "ACTIVE CALL • $elapsed$mutedTag • AUDIO ON POCKET PHONE"
+      callTimerView?.text = "ACTIVE CALL • $elapsed$mutedTag"
       mainHandler.postDelayed(callTimerRunnable, 1000L)
     }
   }
@@ -128,6 +152,13 @@ class PillionOverlayService : Service() {
       }
       prevCallActive = nowCall
       prevCallIncoming = nowIncoming
+
+      val currentVol = PillionStateStore.volumePercent
+      if (prevVolumePercent != -1 && currentVol != prevVolumePercent) {
+        showVolumeHud(currentVol, false)
+      }
+      prevVolumePercent = currentVol
+
       render()
     }
   }
@@ -319,6 +350,7 @@ class PillionOverlayService : Service() {
     textSp: Float = 13f,
     padH: Int = 10,
     padV: Int = 9,
+    maxLines: Int = 1,
     onClick: () -> Unit
   ): TextView = TextView(this).apply {
     text = label
@@ -328,6 +360,10 @@ class PillionOverlayService : Service() {
     gravity = Gravity.CENTER
     setPadding(dp(padH), dp(padV), dp(padH), dp(padV))
     background = roundedBox(bgColor, borderColor, 1, 7)
+    this.maxLines = maxLines
+    if (maxLines == 1) {
+      ellipsize = TextUtils.TruncateAt.END
+    }
     setOnClickListener { onClick() }
   }
 
@@ -351,6 +387,7 @@ class PillionOverlayService : Service() {
     val contacts = PillionStateStore.getContacts()
     val recents = PillionStateStore.getRecentCalls()
     val alerts = PillionStateStore.getNotifications()
+    val missedCalls = recents.count { it.callType == 3 }
     val showCollapsedTitle = PillionStateStore.songTitle != "No Media Playing" && !PillionStateStore.isCallActive
     return RenderSignature(
       isExpanded = isExpanded,
@@ -364,7 +401,8 @@ class PillionOverlayService : Service() {
       callerNumber = PillionStateStore.callerNumber,
       keypadText = keypadDigits.toString(),
       hasDuration = PillionStateStore.durationMs > 0L,
-      contactsCount = contacts.size,
+      missedCallsCount = missedCalls,
+      alertsCount = alerts.size,
       contactsStamp = contacts.hashCode(),
       recentsStamp = recents.hashCode(),
       alertsStamp = alerts.hashCode(),
@@ -379,9 +417,13 @@ class PillionOverlayService : Service() {
     collapsedTitleView = null
     mediaTitleView = null
     mediaArtistView = null
+    mediaTimeView = null
     mediaProgressView = null
     mediaPlayPauseButton = null
     callTimerView = null
+    volumeHudContainer = null
+    volumeHudBar = null
+    volumeHudLabel = null
   }
 
   private fun patchDynamicViews() {
@@ -428,12 +470,18 @@ class PillionOverlayService : Service() {
     }
     mediaTitleView?.text = PillionStateStore.songTitle
     mediaArtistView?.text = PillionStateStore.artistName
-    if (PillionStateStore.durationMs > 0L) {
+    if (!isUserSeeking && PillionStateStore.durationMs > 0L) {
       mediaProgressView?.progress = ((PillionStateStore.progressMs.toDouble() / PillionStateStore.durationMs.toDouble()) * 1000.0)
         .roundToInt()
         .coerceIn(0, 1000)
+      val cur = PillionProtocol.formatDurationMs(PillionStateStore.progressMs)
+      val dur = PillionProtocol.formatDurationMs(PillionStateStore.durationMs)
+      mediaTimeView?.text = "$cur / $dur"
+    } else if (PillionStateStore.durationMs <= 0L) {
+      mediaTimeView?.text = ""
     }
     mediaPlayPauseButton?.text = if (PillionStateStore.isPlaying) "PAUSE" else "PLAY"
+    volumeHudBar?.progress = PillionStateStore.volumePercent
   }
 
   private fun render() {
@@ -472,7 +520,7 @@ class PillionOverlayService : Service() {
         setTextColor(orange)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         typeface = Typeface.DEFAULT_BOLD
-        maxLines = 1
+        maxLines = 2
         ellipsize = TextUtils.TruncateAt.END
         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
       })
@@ -487,8 +535,8 @@ class PillionOverlayService : Service() {
         row.addView(TextView(this).apply {
           text = popup.text
           setTextColor(Color.WHITE)
-          setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-          maxLines = 2
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+          maxLines = 3
           ellipsize = TextUtils.TruncateAt.END
           setPadding(0, dp(4), 0, 0)
         })
@@ -556,9 +604,13 @@ class PillionOverlayService : Service() {
 
     // Expanded Android Auto-style Floating Widget
     root.setPadding(dp(12), dp(12), dp(12), dp(12))
+    val metrics = resources.displayMetrics
+    val screenWidthDp = (metrics.widthPixels / metrics.density).roundToInt()
+    val panelWidthDp = (screenWidthDp - 24).coerceIn(280, 340)
+
     val panel = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
-      layoutParams = LinearLayout.LayoutParams(dp(332), LinearLayout.LayoutParams.WRAP_CONTENT)
+      layoutParams = LinearLayout.LayoutParams(dp(panelWidthDp), LinearLayout.LayoutParams.WRAP_CONTENT)
     }
 
     // Draggable Top Header
@@ -623,22 +675,30 @@ class PillionOverlayService : Service() {
           " • " + PillionProtocol.formatCallElapsed(PillionStateStore.callStartedAtMs)
         } else ""
         val mutedTag = if (isMuted) " • MUTED" else ""
-        text = if (isIncoming) "INCOMING CALL • AUDIO ON POCKET PHONE" else "ACTIVE CALL$elapsed$mutedTag • AUDIO ON POCKET PHONE"
+        text = if (isIncoming) "INCOMING CALL" else "ACTIVE CALL$elapsed$mutedTag"
         setTextColor(if (isIncoming) crimson else if (isMuted) orange else emerald)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
         typeface = Typeface.MONOSPACE
       }
       callTimerView = statusTv
       callBox.addView(statusTv)
 
       callBox.addView(TextView(this).apply {
+        text = "AUDIO ON POCKET PHONE / INTERCOM"
+        setTextColor(muted)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+        typeface = Typeface.MONOSPACE
+        setPadding(0, dp(1), 0, dp(4))
+      })
+
+      callBox.addView(TextView(this).apply {
         text = PillionStateStore.callerName.ifEmpty { "Unknown Caller" }
         setTextColor(Color.WHITE)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
         typeface = Typeface.DEFAULT_BOLD
-        maxLines = 1
+        maxLines = 2
         ellipsize = TextUtils.TruncateAt.END
-        setPadding(0, dp(4), 0, dp(2))
+        setPadding(0, dp(2), 0, dp(2))
       })
       if (PillionStateStore.callerNumber.isNotEmpty() && PillionStateStore.callerNumber != PillionStateStore.callerName) {
         callBox.addView(TextView(this).apply {
@@ -702,35 +762,88 @@ class PillionOverlayService : Service() {
           setPadding(dp(12), dp(10), dp(12), dp(10))
           background = roundedBox(cardBg, border, 1, 9)
         }
+        val topMeta = LinearLayout(this).apply {
+          orientation = LinearLayout.HORIZONTAL
+          gravity = Gravity.CENTER_VERTICAL
+          val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+          lp.bottomMargin = dp(4)
+          layoutParams = lp
+        }
+        topMeta.addView(TextView(this).apply {
+          text = "NOW PLAYING"
+          setTextColor(muted)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+          typeface = Typeface.MONOSPACE
+          layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        val timeTv = TextView(this).apply {
+          val cur = PillionProtocol.formatDurationMs(PillionStateStore.progressMs)
+          val dur = PillionProtocol.formatDurationMs(PillionStateStore.durationMs)
+          text = if (PillionStateStore.durationMs > 0L) "$cur / $dur" else ""
+          setTextColor(orange)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+          typeface = Typeface.MONOSPACE
+        }
+        mediaTimeView = timeTv
+        topMeta.addView(timeTv)
+        mediaCard.addView(topMeta)
+
         val titleTv = TextView(this).apply {
           text = PillionStateStore.songTitle
           setTextColor(Color.WHITE)
           setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
           typeface = Typeface.DEFAULT_BOLD
-          maxLines = 1
+          maxLines = 2
           ellipsize = TextUtils.TruncateAt.END
         }
         mediaTitleView = titleTv
         mediaCard.addView(titleTv)
+
         val artistTv = TextView(this).apply {
           text = PillionStateStore.artistName
           setTextColor(muted)
           setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-          maxLines = 1
+          maxLines = 2
           ellipsize = TextUtils.TruncateAt.END
+          setPadding(0, dp(2), 0, 0)
         }
         mediaArtistView = artistTv
         mediaCard.addView(artistTv)
+
         if (PillionStateStore.durationMs > 0L) {
-          val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+          val bar = SeekBar(this).apply {
             max = 1000
             progress = ((PillionStateStore.progressMs.toDouble() / PillionStateStore.durationMs.toDouble()) * 1000.0)
               .roundToInt()
               .coerceIn(0, 1000)
-            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(4))
-            lp.topMargin = dp(8)
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(26))
+            lp.topMargin = dp(6)
             layoutParams = lp
+            setPadding(dp(4), 0, dp(4), 0)
           }
+          bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, prog: Int, fromUser: Boolean) {
+              if (fromUser && PillionStateStore.durationMs > 0L) {
+                val targetMs = ((prog.toDouble() / 1000.0) * PillionStateStore.durationMs.toDouble()).toLong()
+                val cur = PillionProtocol.formatDurationMs(targetMs)
+                val dur = PillionProtocol.formatDurationMs(PillionStateStore.durationMs)
+                mediaTimeView?.text = "$cur / $dur"
+              }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+              isUserSeeking = true
+            }
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+              isUserSeeking = false
+              seekBar?.let { sb ->
+                if (PillionStateStore.durationMs > 0L) {
+                  val targetMs = ((sb.progress.toDouble() / 1000.0) * PillionStateStore.durationMs.toDouble()).toLong()
+                  PillionStateStore.progressMs = targetMs
+                  PillionStateStore.sendMessage("/media/seek|$targetMs")
+                }
+              }
+            }
+          })
           mediaProgressView = bar
           mediaCard.addView(bar)
         }
@@ -769,18 +882,53 @@ class PillionOverlayService : Service() {
         })
         panel.addView(controls)
 
+        val volHud = LinearLayout(this).apply {
+          orientation = LinearLayout.VERTICAL
+          setPadding(dp(10), dp(6), dp(10), dp(6))
+          background = roundedBox(cardBg, orange, 1, 7)
+          visibility = if (isVolumeHudVisible) View.VISIBLE else View.GONE
+          val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+          lp.topMargin = dp(6)
+          layoutParams = lp
+        }
+        volumeHudContainer = volHud
+
+        val vhLabel = TextView(this).apply {
+          text = "VOLUME ${PillionStateStore.volumePercent}%"
+          setTextColor(orange)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+          typeface = Typeface.MONOSPACE
+        }
+        volumeHudLabel = vhLabel
+        volHud.addView(vhLabel)
+
+        val vhBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+          max = 100
+          progress = PillionStateStore.volumePercent
+          val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(4))
+          lp.topMargin = dp(4)
+          layoutParams = lp
+        }
+        volumeHudBar = vhBar
+        volHud.addView(vhBar)
+        panel.addView(volHud)
+
         val volRow = LinearLayout(this).apply {
           orientation = LinearLayout.HORIZONTAL
           val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
           lp.topMargin = dp(6)
           layoutParams = lp
         }
-        volRow.addView(makeButton("VOL -", surfaceMuted, muted, border, textSp = 12f, padV = 7) {
+        volRow.addView(makeButton("VOL -", surfaceMuted, muted, border, textSp = 12f, padV = 8) {
+          val next = (PillionStateStore.volumePercent - 7).coerceIn(0, 100)
+          showVolumeHud(next, false)
           PillionStateStore.sendMessage("/volume/down")
         }.apply {
           layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        volRow.addView(makeButton("VOL +", surfaceMuted, muted, border, textSp = 12f, padV = 7) {
+        volRow.addView(makeButton("VOL +", surfaceMuted, muted, border, textSp = 12f, padV = 8) {
+          val next = (PillionStateStore.volumePercent + 7).coerceIn(0, 100)
+          showVolumeHud(next, false)
           PillionStateStore.sendMessage("/volume/up")
         }.apply {
           val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -982,7 +1130,7 @@ class PillionOverlayService : Service() {
               setTextColor(Color.WHITE)
               setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
               typeface = Typeface.DEFAULT_BOLD
-              maxLines = 1
+              maxLines = 2
               ellipsize = TextUtils.TruncateAt.END
               layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
@@ -995,9 +1143,9 @@ class PillionOverlayService : Service() {
                 text = notif.text
                 setTextColor(muted)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                maxLines = 2
+                maxLines = 3
                 ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(2), 0, 0)
+                setPadding(0, dp(3), 0, 0)
               })
             }
             if (notif.canReply) {
@@ -1041,9 +1189,10 @@ class PillionOverlayService : Service() {
         if (selected) orange else cardBg,
         if (selected) Color.BLACK else Color.WHITE,
         if (selected) orange else border,
-        textSp = 12f,
-        padH = 6,
-        padV = 8
+        textSp = 11f,
+        padH = 4,
+        padV = 8,
+        maxLines = 1
       ) {
         activeTab = tab
         render()
@@ -1053,9 +1202,11 @@ class PillionOverlayService : Service() {
         layoutParams = lp
       })
     }
+    val missedCalls = PillionStateStore.getRecentCalls().count { it.callType == 3 }
+    val alertsCount = PillionStateStore.getNotifications().size
     addDockTab(WidgetTab.MEDIA, "MEDIA")
-    addDockTab(WidgetTab.CALLS, "CALLS (${PillionStateStore.getContacts().size})")
-    addDockTab(WidgetTab.ALERTS, "ALERTS (${PillionStateStore.getNotifications().size})", marginEnd = false)
+    addDockTab(WidgetTab.CALLS, if (missedCalls > 0) "CALLS ($missedCalls)" else "CALLS")
+    addDockTab(WidgetTab.ALERTS, if (alertsCount > 0) "ALERTS ($alertsCount)" else "ALERTS", marginEnd = false)
     panel.addView(dock)
 
     root.addView(panel)
@@ -1111,7 +1262,7 @@ class PillionOverlayService : Service() {
       setTextColor(Color.WHITE)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
       typeface = Typeface.DEFAULT_BOLD
-      maxLines = 1
+      maxLines = 2
       ellipsize = TextUtils.TruncateAt.END
     })
     info.addView(TextView(this@PillionOverlayService).apply {
@@ -1136,6 +1287,7 @@ class PillionOverlayService : Service() {
     PillionStateStore.removeListener(stateListener)
     PillionStateStore.notifyChanged()
     mainHandler.removeCallbacks(hidePopupRunnable)
+    mainHandler.removeCallbacks(hideVolumeRunnable)
     mainHandler.removeCallbacks(callTimerRunnable)
     rootContainer?.let {
       try {

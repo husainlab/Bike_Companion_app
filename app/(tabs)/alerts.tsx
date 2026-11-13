@@ -32,9 +32,11 @@ export default function AlertsScreen() {
       title="Alerts & Log"
       eyebrow="LIVE MIRROR FEED"
       rightSlot={
-        <Text className="font-mono-bold text-xs text-primary">
-          {companion.notifications.length} ACTIVE
-        </Text>
+        companion.notifications.length > 0 ? (
+          <Text className="font-mono-bold text-xs text-primary">
+            {companion.notifications.length} ACTIVE
+          </Text>
+        ) : null
       }
     >
       <ScreenScroll>
@@ -55,14 +57,16 @@ export default function AlertsScreen() {
             </Card>
           ) : (
             companion.notifications.map((item) => (
-              <Card key={item.key} className="gap-2.5">
-                <View className="flex-row items-center justify-between gap-2 min-w-0">
-                  <Text className="font-bold text-base text-foreground flex-1 min-w-0 break-words" numberOfLines={1}>
-                    {item.title}
-                  </Text>
-                  <Text className="font-mono text-xs text-foreground-muted shrink-0">
-                    {formatRelativeTime(item.receivedAt)}
-                  </Text>
+              <Card key={item.key} className="gap-3">
+                <View className="flex-row items-start justify-between gap-2 min-w-0">
+                  <View className="flex-1 min-w-0 pr-1 gap-0.5">
+                    <Text className="font-bold text-base text-foreground leading-snug" numberOfLines={2}>
+                      {item.title}
+                    </Text>
+                    <Text className="font-mono text-[11px] text-foreground-muted" numberOfLines={1}>
+                      {item.packageName} • {formatRelativeTime(item.receivedAt)}
+                    </Text>
+                  </View>
                   <Press
                     onPress={() => dismissMirroredNotification(item.key)}
                     accessibilityLabel="Dismiss notification"
@@ -72,33 +76,28 @@ export default function AlertsScreen() {
                   </Press>
                 </View>
                 {item.text ? (
-                  <Text className="text-sm text-foreground-muted leading-relaxed break-words" numberOfLines={3}>
+                  <Text className="text-sm text-foreground-muted leading-relaxed" numberOfLines={4}>
                     {item.text}
                   </Text>
                 ) : null}
-                <View className="flex-row items-center justify-between gap-2 min-w-0">
-                  <Text className="font-mono text-xs text-foreground-muted flex-1 min-w-0 break-words" numberOfLines={1}>
-                    {item.packageName}
-                  </Text>
-                  {item.canReply ? (
-                    <Text className="font-mono-bold text-xs text-accent shrink-0">QUICK REPLY</Text>
-                  ) : null}
-                </View>
                 {item.canReply ? (
-                  <View className="flex-row flex-wrap gap-2 pt-1">
-                    {RIDING_QUICK_REPLIES.map((reply) => (
-                      <Press
-                        key={reply}
-                        onPress={async () => {
-                          await replyToMirroredNotification(item.key, reply);
-                          showToast(`Sent: "${reply}"`, 'success');
-                        }}
-                        className="flex-row items-center gap-1.5 rounded-sm border-[1.5px] border-accent bg-surface-muted px-3 py-2"
-                      >
-                        <Icon name="send" size={14} color={palette.accent} />
-                        <Text className="font-bold text-xs text-accent">{reply}</Text>
-                      </Press>
-                    ))}
+                  <View className="pt-1 gap-1.5">
+                    <Text className="font-mono-bold text-xs text-accent">QUICK REPLY</Text>
+                    <View className="flex-row flex-wrap gap-2">
+                      {RIDING_QUICK_REPLIES.map((reply) => (
+                        <Press
+                          key={reply}
+                          onPress={async () => {
+                            await replyToMirroredNotification(item.key, reply);
+                            showToast(`Sent: "${reply}"`, 'success');
+                          }}
+                          className="flex-row items-center gap-1.5 rounded-sm border-[1.5px] border-accent bg-surface-muted px-3 py-2 min-h-10"
+                        >
+                          <Icon name="send" size={14} color={palette.accent} />
+                          <Text className="font-bold text-xs text-accent">{reply}</Text>
+                        </Press>
+                      ))}
+                    </View>
                   </View>
                 ) : null}
               </Card>
