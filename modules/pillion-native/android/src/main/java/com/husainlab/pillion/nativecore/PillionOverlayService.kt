@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.graphics.Color
@@ -18,6 +20,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.TypedValue
@@ -100,6 +103,56 @@ class PillionOverlayService : Service() {
   private var volumeHudContainer: LinearLayout? = null
   private var volumeHudBar: SeekBar? = null
   private var volumeHudLabel: TextView? = null
+  private var wakeLock: PowerManager.WakeLock? = null
+
+  private val keepAwakeReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+      if (intent?.action != "com.husainlab.pillion.ACTION_UPDATE_KEEP_AWAKE") return
+      val enabled = intent.getBooleanExtra("keepAwake", true)
+      applyKeepAwake(enabled)
+    }
+  }
+
+  private fun isKeepScreenAwakeConfigured(): Boolean {
+    val prefs = getSharedPreferences("pillion_native_prefs", Context.MODE_PRIVATE)
+    return prefs.getBoolean("keep_screen_awake", true)
+  }
+
+  @Suppress("DEPRECATION")
+  private fun applyKeepAwake(enabled: Boolean) {
+    try {
+      if (::params.isInitialized) {
+        if (enabled) {
+          params.flags = params.flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        } else {
+          params.flags = params.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.inv()
+        }
+        rootContainer?.let {
+          if (it.isAttachedToWindow) {
+            windowManager.updateViewLayout(it, params)
+          }
+        }
+      }
+      if (enabled) {
+        if (wakeLock == null) {
+          val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+          wakeLock = pm?.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+            "pillion:overlay_awake"
+          )?.apply {
+            setReferenceCounted(false)
+          }
+        }
+        if (wakeLock?.isHeld == false) {
+          wakeLock?.acquire()
+        }
+      } else {
+        if (wakeLock?.isHeld == true) {
+          wakeLock?.release()
+        }
+      }
+    } catch (_: Exception) {}
+  }
 
   private val hidePopupRunnable = Runnable {
     popupNotification = null
@@ -226,6 +279,13 @@ class PillionOverlayService : Service() {
     prevCallActive = PillionStateStore.isCallActive
     prevCallIncoming = PillionStateStore.isCallIncoming
     if (createOverlayWindow()) {
+      val filter = IntentFilter("com.husainlab.pillion.ACTION_UPDATE_KEEP_AWAKE")
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        registerReceiver(keepAwakeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+      } else {
+        registerReceiver(keepAwakeReceiver, filter)
+      }
+      applyKeepAwake(isKeepScreenAwakeConfigured())
       PillionStateStore.isOverlayRunning = true
       PillionStateStore.addListener(stateListener)
       PillionStateStore.notifyChanged()
@@ -313,11 +373,15 @@ class PillionOverlayService : Service() {
       WindowManager.LayoutParams.TYPE_PHONE
     }
 
+    val keepAwake = isKeepScreenAwakeConfigured()
+    val baseFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+    val flags = if (keepAwake) baseFlags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON else baseFlags
+
     params = WindowManager.LayoutParams(
       WindowManager.LayoutParams.WRAP_CONTENT,
       WindowManager.LayoutParams.WRAP_CONTENT,
       layoutType,
-      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+      flags,
       PixelFormat.TRANSLUCENT
     ).apply {
       gravity = Gravity.TOP or Gravity.START
@@ -738,7 +802,7 @@ class PillionOverlayService : Service() {
         isUserAdjustingVolume = false
         seekBar?.let { sb ->
           PillionStateStore.volumePercent = sb.progress
-          PillionStateStore.sendMessage("VOLUME|${sb.progress}")
+          PillionStateStore.sendMessage("/volume/set|${sb.progress}")
         }
         mainHandler.removeCallbacks(hideVolumeRunnable)
         mainHandler.postDelayed(hideVolumeRunnable, 2500L)
@@ -862,6 +926,11 @@ class PillionOverlayService : Service() {
           padV = 5
         ) {
           PillionStateStore.sendMessage("/call/decline")
+          PillionStateStore.isCallActive = false
+          PillionStateStore.isCallIncoming = false
+          PillionStateStore.callStartedAtMs = 0L
+          PillionStateStore.notifyChanged()
+          render()
         }.apply {
           layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
@@ -869,6 +938,13 @@ class PillionOverlayService : Service() {
         if (isIncoming) {
           actions.addView(makeButton("ANSWER", emerald, Color.BLACK, emerald, textSp = 11f, padH = 6, padV = 5) {
             PillionStateStore.sendMessage("/call/answer")
+            PillionStateStore.isCallIncoming = false
+            PillionStateStore.isCallActive = true
+            if (PillionStateStore.callStartedAtMs <= 0L) {
+              PillionStateStore.callStartedAtMs = System.currentTimeMillis()
+            }
+            PillionStateStore.notifyChanged()
+            render()
           }.apply {
             val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             lp.marginStart = dp(5)
@@ -885,6 +961,9 @@ class PillionOverlayService : Service() {
             padV = 5
           ) {
             PillionStateStore.sendMessage("/call/mute")
+            PillionStateStore.isCallMuted = !isMuted
+            PillionStateStore.notifyChanged()
+            render()
           }.apply {
             val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             lp.marginStart = dp(5)
@@ -955,6 +1034,11 @@ class PillionOverlayService : Service() {
           textSp = 12f
         ) {
           PillionStateStore.sendMessage("/call/decline")
+          PillionStateStore.isCallActive = false
+          PillionStateStore.isCallIncoming = false
+          PillionStateStore.callStartedAtMs = 0L
+          PillionStateStore.notifyChanged()
+          render()
         }.apply {
           layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
@@ -962,6 +1046,13 @@ class PillionOverlayService : Service() {
         if (isIncoming) {
           actions.addView(makeButton("ANSWER", emerald, Color.BLACK, emerald, textSp = 12f) {
             PillionStateStore.sendMessage("/call/answer")
+            PillionStateStore.isCallIncoming = false
+            PillionStateStore.isCallActive = true
+            if (PillionStateStore.callStartedAtMs <= 0L) {
+              PillionStateStore.callStartedAtMs = System.currentTimeMillis()
+            }
+            PillionStateStore.notifyChanged()
+            render()
           }.apply {
             val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             lp.marginStart = dp(8)
@@ -976,6 +1067,9 @@ class PillionOverlayService : Service() {
             textSp = 12f
           ) {
             PillionStateStore.sendMessage("/call/mute")
+            PillionStateStore.isCallMuted = !isMuted
+            PillionStateStore.notifyChanged()
+            render()
           }.apply {
             val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             lp.marginStart = dp(8)
@@ -1491,6 +1585,15 @@ class PillionOverlayService : Service() {
 
   override fun onDestroy() {
     super.onDestroy()
+    try {
+      unregisterReceiver(keepAwakeReceiver)
+    } catch (_: Exception) {}
+    try {
+      if (wakeLock?.isHeld == true) {
+        wakeLock?.release()
+      }
+    } catch (_: Exception) {}
+    wakeLock = null
     PillionStateStore.isOverlayRunning = false
     PillionStateStore.removeListener(stateListener)
     PillionStateStore.notifyChanged()

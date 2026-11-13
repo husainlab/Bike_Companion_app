@@ -62,6 +62,7 @@ class PillionNativeModule : Module() {
   private val isConnecting = AtomicBoolean(false)
   @Volatile private var serverAcceptJob: Job? = null
   @Volatile private var activeServerSocket: BluetoothServerSocket? = null
+  @Volatile private var callWatchdogJob: Job? = null
 
   private val context: Context
     get() = appContext.reactContext ?: throw IllegalStateException("React context unavailable")
@@ -90,6 +91,7 @@ class PillionNativeModule : Module() {
       PillionStateStore.removeListener(stateListener)
       stopServerInternal()
       reconnectJob?.cancel()
+      callWatchdogJob?.cancel()
       scope.cancel()
     }
 
@@ -139,6 +141,7 @@ class PillionNativeModule : Module() {
       val roleChanged = isSenderMode != nextSender
       isSenderMode = nextSender
       if (nextSender) {
+        startCallWatchdog()
         stopGpsSpeedTracking()
         autoReconnectEnabled = false
         reconnectJob?.cancel()
@@ -148,6 +151,7 @@ class PillionNativeModule : Module() {
           context.stopService(Intent(context, PillionOverlayService::class.java))
         }
       } else {
+        stopCallWatchdog()
         startGpsSpeedTracking()
         if (PillionStateStore.isServerRunning) {
           stopServerInternal()
@@ -205,6 +209,18 @@ class PillionNativeModule : Module() {
         .edit()
         .putBoolean(PREF_AUTO_START_OVERLAY, enabled)
         .apply()
+    }
+
+    AsyncFunction("setKeepScreenAwake") { enabled: Boolean ->
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean("keep_screen_awake", enabled)
+        .apply()
+      val intent = Intent("com.husainlab.pillion.ACTION_UPDATE_KEEP_AWAKE").apply {
+        putExtra("keepAwake", enabled)
+        setPackage(context.packageName)
+      }
+      context.sendBroadcast(intent)
     }
 
     AsyncFunction("sendCommand") { path: String ->
@@ -346,8 +362,52 @@ class PillionNativeModule : Module() {
     updateStatus(nextStatus)
   }
 
+  private fun startCallWatchdog() {
+    if (callWatchdogJob?.isActive == true) return
+    callWatchdogJob = scope.launch {
+      val telecom = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+      val telephony = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+      while (isActive) {
+        delay(1200L)
+        if (!isSenderMode) continue
+        if (PillionStateStore.isCallActive) {
+          var isActuallyInCall = false
+          try {
+            val hasPhonePermission = ActivityCompat.checkSelfPermission(
+              context,
+              Manifest.permission.READ_PHONE_STATE
+            ) == PackageManager.PERMISSION_GRANTED
+            if (hasPhonePermission) {
+              val telecomInCall = telecom?.isInCall == true
+              val telephonyInCall = telephony?.callState != TelephonyManager.CALL_STATE_IDLE
+              isActuallyInCall = telecomInCall || telephonyInCall
+            } else {
+              isActuallyInCall = telecom?.isInCall == true
+            }
+          } catch (_: Exception) {}
+
+          if (!isActuallyInCall) {
+            PillionStateStore.isCallActive = false
+            PillionStateStore.isCallIncoming = false
+            PillionStateStore.callStartedAtMs = 0L
+            PillionStateStore.callerName = ""
+            PillionStateStore.callerNumber = ""
+            PillionStateStore.sendMessage("CALL_END")
+            PillionStateStore.notifyChanged()
+          }
+        }
+      }
+    }
+  }
+
+  private fun stopCallWatchdog() {
+    callWatchdogJob?.cancel()
+    callWatchdogJob = null
+  }
+
   private fun startServerInternal() {
     if (PillionStateStore.isServerRunning) return
+    startCallWatchdog()
     val adapter = bluetoothAdapter
     if (adapter == null) {
       updateStatus("Bluetooth unavailable")
@@ -418,6 +478,7 @@ class PillionNativeModule : Module() {
   }
 
   private fun stopServerInternal() {
+    stopCallWatchdog()
     PillionStateStore.isServerRunning = false
     try {
       activeServerSocket?.close()
@@ -687,6 +748,15 @@ class PillionNativeModule : Module() {
             @Suppress("DEPRECATION")
             telecomManager.acceptRingingCall()
           }
+          PillionStateStore.isCallActive = true
+          PillionStateStore.isCallIncoming = false
+          if (PillionStateStore.callStartedAtMs <= 0L) {
+            PillionStateStore.callStartedAtMs = System.currentTimeMillis()
+          }
+          val name = PillionStateStore.callerName.ifEmpty { "Active Call" }
+          val num = PillionStateStore.callerNumber
+          PillionStateStore.sendMessage("CALL_ACTIVE|$name|$num")
+          PillionStateStore.notifyChanged()
         }
         path == "/call/decline" -> {
           var ended = false
@@ -703,7 +773,14 @@ class PillionNativeModule : Module() {
             audioManager.isMicrophoneMute = false
           } catch (_: Exception) {}
           PillionStateStore.isCallMuted = false
+          PillionStateStore.isCallActive = false
+          PillionStateStore.isCallIncoming = false
+          PillionStateStore.callStartedAtMs = 0L
+          PillionStateStore.callerName = ""
+          PillionStateStore.callerNumber = ""
           PillionStateStore.sendMessage("CALL_MUTE|0")
+          PillionStateStore.sendMessage("CALL_END")
+          PillionStateStore.notifyChanged()
         }
         path == "/call/mute" -> {
           val nextMuted = !audioManager.isMicrophoneMute
@@ -762,6 +839,17 @@ class PillionNativeModule : Module() {
           val targetMs = path.removePrefix("/media/seek|").toLongOrNull() ?: 0L
           PillionStateStore.progressMs = targetMs
           PillionStateStore.mediaSeekHandler?.invoke(targetMs)
+          PillionStateStore.notifyChanged()
+        }
+        path.startsWith("/volume/set|") -> {
+          val targetPct = path.removePrefix("/volume/set|").toIntOrNull()?.coerceIn(0, 100) ?: 70
+          val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+          val targetIndex = (targetPct * max / 100.0).roundToInt().coerceIn(0, max)
+          audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetIndex, AudioManager.FLAG_SHOW_UI)
+          val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+          val actualPct = if (max > 0) (cur * 100) / max else targetPct
+          PillionStateStore.volumePercent = actualPct
+          PillionStateStore.sendMessage("VOLUME|$actualPct")
           PillionStateStore.notifyChanged()
         }
         path == "/volume/up" -> {

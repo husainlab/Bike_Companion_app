@@ -83,6 +83,7 @@ type PillionNativeModuleInterface = {
   startOverlay(): Promise<boolean>;
   stopOverlay(): Promise<void>;
   setAutoStartOverlay(enabled: boolean): Promise<void>;
+  setKeepScreenAwake(enabled: boolean): Promise<void>;
   syncContacts(): Promise<void>;
   launchGoogleMaps(splitScreen: boolean): Promise<boolean>;
   sendCommand(path: string): Promise<void>;

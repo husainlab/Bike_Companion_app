@@ -61,9 +61,37 @@ class PillionNotificationListener : NotificationListenerService() {
       if (intent?.action != PillionProtocol.ACTION_SYNC) return
       val batteryStatus = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
       val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+      val tempRaw = batteryStatus?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+      val tempC = if (tempRaw > 0) tempRaw / 10 else -1
       if (level != -1) {
-        PillionStateStore.sendMessage("BATTERY|$level")
+        PillionStateStore.batteryLevel = level
+        PillionStateStore.batteryTempC = tempC
+        PillionStateStore.sendMessage("BATTERY|$level|$tempC")
       }
+
+      try {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        if (audioManager != null) {
+          val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+          val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+          val pct = if (max > 0) (cur * 100) / max else 70
+          PillionStateStore.volumePercent = pct
+          PillionStateStore.sendMessage("VOLUME|$pct")
+        }
+      } catch (_: Exception) {}
+
+      if (PillionStateStore.isCallActive) {
+        val packetType = if (PillionStateStore.isCallIncoming) "CALL_IN" else "CALL_ACTIVE"
+        val name = PillionStateStore.callerName.ifEmpty { "Active Call" }
+        val num = PillionStateStore.callerNumber
+        PillionStateStore.sendMessage("$packetType|$name|$num")
+        PillionStateStore.sendMessage("CALL_MUTE|${if (PillionStateStore.isCallMuted) "1" else "0"}")
+      } else {
+        PillionStateStore.sendMessage("CALL_END")
+      }
+
+      lastTitle = ""
+      lastArtist = ""
       checkAndSendMediaUpdate()
       PillionStateStore.sendMessage("NOTIF_CLEAR_ALL")
       try {
@@ -71,6 +99,26 @@ class PillionNotificationListener : NotificationListenerService() {
           onNotificationPosted(sbn)
         }
       } catch (_: Exception) {}
+    }
+  }
+
+  private val volumeReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+      if (intent?.action != "android.media.VOLUME_CHANGED_ACTION") return
+      val streamType = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1)
+      if (streamType == AudioManager.STREAM_MUSIC || streamType == -1) {
+        try {
+          val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+          val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+          val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+          val pct = if (max > 0) (cur * 100) / max else 70
+          if (pct != PillionStateStore.volumePercent) {
+            PillionStateStore.volumePercent = pct
+            PillionStateStore.sendMessage("VOLUME|$pct")
+            PillionStateStore.notifyChanged()
+          }
+        } catch (_: Exception) {}
+      }
     }
   }
 
@@ -124,14 +172,17 @@ class PillionNotificationListener : NotificationListenerService() {
 
     val internalFilter = IntentFilter(PillionProtocol.ACTION_SYNC)
     val phoneFilter = IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
+    val volumeFilter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED), Context.RECEIVER_EXPORTED)
       registerReceiver(systemPhoneStateReceiver, phoneFilter, Context.RECEIVER_EXPORTED)
+      registerReceiver(volumeReceiver, volumeFilter, Context.RECEIVER_EXPORTED)
       registerReceiver(internalSyncReceiver, internalFilter, Context.RECEIVER_NOT_EXPORTED)
     } else {
       registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
       registerReceiver(systemPhoneStateReceiver, phoneFilter)
+      registerReceiver(volumeReceiver, volumeFilter)
       registerReceiver(internalSyncReceiver, internalFilter)
     }
 
@@ -174,6 +225,9 @@ class PillionNotificationListener : NotificationListenerService() {
     } catch (_: Exception) {}
     try {
       unregisterReceiver(internalSyncReceiver)
+    } catch (_: Exception) {}
+    try {
+      unregisterReceiver(volumeReceiver)
     } catch (_: Exception) {}
     removeAllCallbacks()
   }
@@ -378,7 +432,12 @@ class PillionNotificationListener : NotificationListenerService() {
       lastCallerName = PillionProtocol.sanitizeField(getContactName(phoneNumber))
     }
     val name = lastCallerName.ifEmpty { "Incoming Call" }
+    PillionStateStore.isCallActive = true
+    PillionStateStore.isCallIncoming = true
+    PillionStateStore.callerName = name
+    PillionStateStore.callerNumber = lastCallerNumber
     emitCallPacket("CALL_IN|$name|$lastCallerNumber")
+    PillionStateStore.notifyChanged()
   }
 
   private fun emitCallEnded() {
@@ -394,13 +453,24 @@ class PillionNotificationListener : NotificationListenerService() {
       (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.isMicrophoneMute = false
     } catch (_: Exception) {}
     PillionStateStore.isCallMuted = false
+    PillionStateStore.isCallActive = false
+    PillionStateStore.isCallIncoming = false
+    PillionStateStore.callStartedAtMs = 0L
     PillionStateStore.sendMessage("CALL_MUTE|0")
     emitCallPacket("CALL_END")
+    PillionStateStore.notifyChanged()
   }
 
   private fun emitCallOffhook() {
     wasRinging = false
     val name = lastCallerName.ifEmpty { "Active Call" }
+    PillionStateStore.isCallActive = true
+    PillionStateStore.isCallIncoming = false
+    if (PillionStateStore.callStartedAtMs <= 0L) {
+      PillionStateStore.callStartedAtMs = System.currentTimeMillis()
+    }
+    PillionStateStore.callerName = name
+    PillionStateStore.callerNumber = lastCallerNumber
     emitCallPacket("CALL_ACTIVE|$name|$lastCallerNumber")
     try {
       val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -408,6 +478,7 @@ class PillionNotificationListener : NotificationListenerService() {
       PillionStateStore.isCallMuted = isMuted
       PillionStateStore.sendMessage("CALL_MUTE|${if (isMuted) "1" else "0"}")
     } catch (_: Exception) {}
+    PillionStateStore.notifyChanged()
   }
 
   private fun handleCallState(state: Int, phoneNumber: String?) {
@@ -453,24 +524,45 @@ class PillionNotificationListener : NotificationListenerService() {
     val extras = sbn.notification.extras
     val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
 
-    if (category == Notification.CATEGORY_CALL) {
+    if (category == Notification.CATEGORY_CALL || category == Notification.CATEGORY_MISSED_CALL) {
+      if (category == Notification.CATEGORY_MISSED_CALL) {
+        emitCallEnded()
+        return
+      }
       captureCallActions(sbn.notification)
       val callerTitle = PillionProtocol.sanitizeField(rawTitle ?: "Incoming Call")
       if (callerTitle.isNotEmpty()) {
         lastCallerName = callerTitle
       }
       val textHint = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+      val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()
+      val combinedText = if (subText.isNullOrEmpty()) textHint else "$textHint $subText"
       val packetType = PillionProtocol.classifyCallNotification(
-        textHint = textHint,
+        textHint = combinedText,
         currentCallActive = lastSentCallKey.startsWith("CALL_ACTIVE|"),
-        currentCallIncoming = lastSentCallKey.startsWith("CALL_IN|")
+        currentCallIncoming = lastSentCallKey.startsWith("CALL_IN|"),
+        titleHint = rawTitle
       )
+      if (packetType == "CALL_END") {
+        emitCallEnded()
+        return
+      }
       if (packetType == "CALL_IN") {
         wasRinging = true
+        PillionStateStore.isCallActive = true
+        PillionStateStore.isCallIncoming = true
       } else if (packetType == "CALL_ACTIVE") {
         wasRinging = false
+        PillionStateStore.isCallActive = true
+        PillionStateStore.isCallIncoming = false
+        if (PillionStateStore.callStartedAtMs <= 0L) {
+          PillionStateStore.callStartedAtMs = System.currentTimeMillis()
+        }
       }
+      PillionStateStore.callerName = callerTitle
+      PillionStateStore.callerNumber = lastCallerNumber
       emitCallPacket("$packetType|$callerTitle|$lastCallerNumber")
+      PillionStateStore.notifyChanged()
       return
     }
 
@@ -500,14 +592,12 @@ class PillionNotificationListener : NotificationListenerService() {
     val key = PillionProtocol.escapeKey(sbn.key)
     trackedNotifications.remove(key)
     PillionStateStore.sendMessage("NOTIF_REMOVE|$key")
-    if (sbn.notification.category == Notification.CATEGORY_CALL) {
+    if (sbn.notification.category == Notification.CATEGORY_CALL ||
+      sbn.notification.category == Notification.CATEGORY_MISSED_CALL
+    ) {
       activeCallAnswerAction = null
       activeCallDeclineAction = null
-      if (wasRinging) {
-        PillionStateStore.sendMessage("CALL_MISSED")
-        wasRinging = false
-      }
-      emitCallPacket("CALL_END")
+      emitCallEnded()
     }
   }
 }

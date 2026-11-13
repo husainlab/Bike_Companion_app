@@ -92,6 +92,28 @@ class PillionProtocolTest {
       "CALL_IN",
       PillionProtocol.classifyCallNotification(null, currentCallActive = false, currentCallIncoming = false)
     )
+
+    // Call ended phrases take precedence over timers and active flags
+    assertEquals(
+      "CALL_END",
+      PillionProtocol.classifyCallNotification("Call ended • 01:23", currentCallActive = true, currentCallIncoming = false)
+    )
+    assertEquals(
+      "CALL_END",
+      PillionProtocol.classifyCallNotification("Call disconnected", currentCallActive = true, currentCallIncoming = false)
+    )
+    assertEquals(
+      "CALL_END",
+      PillionProtocol.classifyCallNotification("01:23", currentCallActive = true, currentCallIncoming = false, titleHint = "Call ended")
+    )
+    assertEquals(
+      "CALL_END",
+      PillionProtocol.classifyCallNotification("Call rejected", currentCallActive = false, currentCallIncoming = true)
+    )
+    assertEquals(
+      "CALL_END",
+      PillionProtocol.classifyCallNotification("Missed call", currentCallActive = false, currentCallIncoming = true)
+    )
   }
 
   @Test

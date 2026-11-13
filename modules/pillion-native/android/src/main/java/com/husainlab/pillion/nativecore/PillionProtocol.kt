@@ -77,15 +77,38 @@ object PillionProtocol {
       }
     }
 
+  fun isCallEndedPhrase(text: String?): Boolean {
+    if (text.isNullOrBlank()) return false
+    val lower = text.lowercase()
+    return lower.contains("call ended") ||
+      lower.contains("ended") ||
+      lower.contains("disconnected") ||
+      lower.contains("call disconnected") ||
+      lower.contains("hung up") ||
+      lower.contains("finished") ||
+      lower.contains("terminated") ||
+      lower.contains("canceled") ||
+      lower.contains("cancelled") ||
+      lower.contains("rejected") ||
+      lower.contains("declined") ||
+      lower.contains("missed") ||
+      lower.contains("busy")
+  }
+
   /**
-   * Classifies a CATEGORY_CALL notification into CALL_ACTIVE or CALL_IN without
-   * flipping an already active call back into ringing state on localized or timer updates.
+   * Classifies a CATEGORY_CALL notification into CALL_ACTIVE, CALL_IN, or CALL_END.
+   * If the notification text/title indicates the call has ended or disconnected, it returns CALL_END.
+   * Otherwise prevents flipping an already active call back into ringing state on localized or timer updates.
    */
   fun classifyCallNotification(
     textHint: String?,
     currentCallActive: Boolean,
-    currentCallIncoming: Boolean
+    currentCallIncoming: Boolean,
+    titleHint: String? = null
   ): String {
+    if (isCallEndedPhrase(textHint) || isCallEndedPhrase(titleHint)) {
+      return "CALL_END"
+    }
     val lower = textHint?.lowercase()?.trim().orEmpty()
     val hasActivePhrase = lower.contains("ongoing") ||
       lower.contains("active") ||
@@ -441,6 +464,9 @@ object PillionStateStore {
       }
       is PillionPacket.Volume -> {
         volumePercent = packet.percent.coerceIn(0, 100)
+        if (isSender) {
+          commandExecutor?.invoke("/volume/set|${packet.percent}")
+        }
       }
       is PillionPacket.CallIncoming -> {
         isCallActive = true

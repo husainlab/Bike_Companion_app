@@ -11,6 +11,7 @@ import {
   logRideSession,
   recordConnectedDevice,
   setAutoVolumeEnabled,
+  setKeepAwakeOnRide,
   setRelayMode,
   setThemePreference,
   startRideSession,
@@ -27,6 +28,7 @@ describe('cockpit actions and queries with MemoryStore', () => {
     await setRelayMode(store, 'receiver');
     await setThemePreference(store, 'dark');
     await setAutoVolumeEnabled(store, true);
+    await setKeepAwakeOnRide(store, true);
     await recordConnectedDevice(store, { address: 'AA:BB:CC:DD:EE:FF', name: 'Pixel Pocket' }, 1000);
     await logRideSession(store, {
       id: 'ride-1',

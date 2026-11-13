@@ -21,6 +21,7 @@ import {
   incrementActiveRideNotifications,
 } from '@/actions/cockpit';
 import {
+  setCompanionKeepScreenAwake,
   setNativeAutoStartOverlay,
   startCockpitOverlay,
 } from '@/data/companion';
@@ -95,11 +96,13 @@ export default function RootLayout() {
   }, [settings.theme]);
 
   useEffect(() => {
-    if (settings.keepAwakeOnRide && settings.relayMode === 'receiver') {
+    const shouldKeepAwake = settings.keepAwakeOnRide && settings.relayMode === 'receiver';
+    if (shouldKeepAwake) {
       activateKeepAwakeAsync('pillion-ride').catch(() => {});
     } else {
       deactivateKeepAwake('pillion-ride').catch(() => {});
     }
+    setCompanionKeepScreenAwake(shouldKeepAwake).catch(() => {});
   }, [settings.keepAwakeOnRide, settings.relayMode]);
 
   useEffect(() => {

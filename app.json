@@ -36,6 +36,7 @@
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.INTERNET",
         "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
         "android.permission.FOREGROUND_SERVICE_SPECIAL_USE"

@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   setRelayRole: vi.fn(async () => {}),
   sendCommand: vi.fn(async () => {}),
   setAutoStartOverlay: vi.fn(async () => {}),
+  setKeepScreenAwake: vi.fn(async () => {}),
   launchGoogleMaps: vi.fn(async () => true),
   remove: vi.fn(),
   addListener: vi.fn(),
@@ -71,6 +72,7 @@ vi.mock('../../modules/pillion-native', () => ({
     setRelayRole: mocks.setRelayRole,
     sendCommand: mocks.sendCommand,
     setAutoStartOverlay: mocks.setAutoStartOverlay,
+    setKeepScreenAwake: mocks.setKeepScreenAwake,
     launchGoogleMaps: mocks.launchGoogleMaps,
     addListener: mocks.addListener.mockImplementation(() => ({ remove: mocks.remove })),
   },
@@ -85,7 +87,9 @@ import {
   replyToMirroredNotification,
   seekMediaPosition,
   sendCockpitCommand,
+  setCompanionKeepScreenAwake,
   setCompanionRelayRole,
+  setCompanionVolume,
   setNativeAutoStartOverlay,
   subscribeCompanionState,
 } from './companion';
@@ -98,6 +102,12 @@ describe('companion native data adapter', () => {
   it('forwards mute command and syncs auto start overlay', async () => {
     await setNativeAutoStartOverlay(true);
     expect(mocks.setAutoStartOverlay).toHaveBeenCalledWith(true);
+
+    await setCompanionKeepScreenAwake(true);
+    expect(mocks.setKeepScreenAwake).toHaveBeenCalledWith(true);
+
+    await setCompanionVolume(85);
+    expect(mocks.sendCommand).toHaveBeenCalledWith('/volume/set|85');
 
     await sendCockpitCommand('/call/mute');
     expect(mocks.sendCommand).toHaveBeenCalledWith('/call/mute');

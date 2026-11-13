@@ -54,6 +54,10 @@ export async function setNativeAutoStartOverlay(enabled: boolean): Promise<void>
   await PillionNative?.setAutoStartOverlay(enabled);
 }
 
+export async function setCompanionKeepScreenAwake(enabled: boolean): Promise<void> {
+  await PillionNative?.setKeepScreenAwake?.(enabled);
+}
+
 export async function openNotificationAccessSettings(): Promise<void> {
   await PillionNative?.openNotificationListenerSettings();
 }
@@ -76,6 +80,7 @@ export async function sendCockpitCommand(
     | `/media/seek|${number}`
     | '/volume/up'
     | '/volume/down'
+    | `/volume/set|${number}`
     | '/call/answer'
     | '/call/decline'
     | '/call/mute'
@@ -87,6 +92,11 @@ export async function sendCockpitCommand(
     | `/notif/reply|${string}|${string}`
 ): Promise<void> {
   await PillionNative?.sendCommand(path);
+}
+
+export async function setCompanionVolume(percent: number): Promise<void> {
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+  await sendCockpitCommand(`/volume/set|${clamped}`);
 }
 
 export async function seekMediaPosition(positionMs: number): Promise<void> {

@@ -52,7 +52,12 @@ export async function setKeepAwakeOnRide(
   keepAwakeOnRide: boolean
 ): Promise<AppSettings> {
   const parsed = z.boolean().parse(keepAwakeOnRide);
-  return patchSettings(store, { keepAwakeOnRide: parsed });
+  const updated = await patchSettings(store, { keepAwakeOnRide: parsed });
+  try {
+    const { setCompanionKeepScreenAwake } = await import('@/data/companion');
+    await setCompanionKeepScreenAwake(parsed);
+  } catch {}
+  return updated;
 }
 
 export async function setAutoStartOverlay(
