@@ -112,9 +112,9 @@ object PillionProtocol {
     val mins = (totalSec % 3600L) / 60L
     val secs = totalSec % 60L
     return if (hours > 0L) {
-      "%d:%02d:%02d".format(hours, mins, secs)
+      java.lang.String.format(java.util.Locale.US, "%d:%02d:%02d", hours, mins, secs)
     } else {
-      "%02d:%02d".format(mins, secs)
+      java.lang.String.format(java.util.Locale.US, "%02d:%02d", mins, secs)
     }
   }
 
@@ -125,9 +125,9 @@ object PillionProtocol {
     val mins = (totalSec % 3600L) / 60L
     val secs = totalSec % 60L
     return if (hours > 0L) {
-      "%d:%02d:%02d".format(hours, mins, secs)
+      java.lang.String.format(java.util.Locale.US, "%d:%02d:%02d", hours, mins, secs)
     } else {
-      "%02d:%02d".format(mins, secs)
+      java.lang.String.format(java.util.Locale.US, "%02d:%02d", mins, secs)
     }
   }
 

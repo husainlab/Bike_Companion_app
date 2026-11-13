@@ -25,6 +25,7 @@ import android.view.KeyEvent
 import androidx.core.app.ActivityCompat
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -764,7 +765,7 @@ class PillionNativeModule : Module() {
           audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
           val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
           val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-          val pct = if (max > 0) ((cur.toDouble() / max.toDouble()) * 100.0).roundToInt() else 0
+          val pct = if (max > 0) (cur * 100) / max else 0
           PillionStateStore.volumePercent = pct
           PillionStateStore.sendMessage("VOLUME|$pct")
           PillionStateStore.notifyChanged()
@@ -773,7 +774,7 @@ class PillionNativeModule : Module() {
           audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
           val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
           val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-          val pct = if (max > 0) ((cur.toDouble() / max.toDouble()) * 100.0).roundToInt() else 0
+          val pct = if (max > 0) (cur * 100) / max else 0
           PillionStateStore.volumePercent = pct
           PillionStateStore.sendMessage("VOLUME|$pct")
           PillionStateStore.notifyChanged()

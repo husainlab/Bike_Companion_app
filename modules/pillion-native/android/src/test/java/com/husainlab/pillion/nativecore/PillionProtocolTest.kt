@@ -108,11 +108,13 @@ class PillionProtocolTest {
     PillionStateStore.applyPacket("ARTIST|Artist A", false)
     PillionStateStore.applyPacket("PLAYING|1", false)
     PillionStateStore.applyPacket("BATTERY|65", false)
+    PillionStateStore.applyPacket("VOLUME|90", false)
     PillionStateStore.applyPacket("CALL_IN|Maya|+15550000", false)
     PillionStateStore.applyPacket("NOTIF_ADD2|k1|com.msg|1|Sam|Hey", false)
 
     assertTrue(PillionStateStore.isCallActive)
     assertTrue(PillionStateStore.isCallIncoming)
+    assertEquals(90, PillionStateStore.volumePercent)
     assertEquals(1, PillionStateStore.getNotifications().size)
 
     PillionStateStore.resetTransientState()
@@ -123,6 +125,7 @@ class PillionProtocolTest {
     assertEquals(0L, PillionStateStore.callStartedAtMs)
     assertFalse(PillionStateStore.isPlaying)
     assertEquals(-1, PillionStateStore.batteryLevel)
+    assertEquals(70, PillionStateStore.volumePercent)
     assertEquals("No Media Playing", PillionStateStore.songTitle)
     assertTrue(PillionStateStore.getNotifications().isEmpty())
     assertNull(PillionStateStore.lastNotification)
