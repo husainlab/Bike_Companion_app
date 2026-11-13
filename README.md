@@ -18,7 +18,7 @@ A two-phone Android riding cockpit designed for motorcyclists. Keep your primary
 
 ## Download
 
-[**Download latest signed APK (`Pillion-release.apk`)**](https://github.com/husainlab/Bike_Companion_app/raw/main/Pillion-release.apk)
+[**Download latest signed APK (`Pillion-release.apk`)**](https://github.com/husainlab/Bike_Companion_app/releases/latest/download/Pillion-release.apk)
 
 All versioned releases and changelogs are published on [GitHub Releases](https://github.com/husainlab/Bike_Companion_app/releases), and installed builds can update directly inside **Setup → Check for updates**.
 

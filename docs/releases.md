@@ -9,8 +9,8 @@ flowchart LR
   B --> C["expo prebuild --clean"]
   C --> D["Gradle assembleRelease (arm64-v8a)"]
   D --> E["apksigner verify"]
-  E --> F["Commit APK & bump [skip ci]"]
-  F --> G["Tag vX.Y.Z & publish GitHub Release"]
+  E --> F["Commit version bump [skip ci]"]
+  F --> G["Tag vX.Y.Z & publish APKs to GitHub Release"]
 ```
 
 ## Signing Configuration

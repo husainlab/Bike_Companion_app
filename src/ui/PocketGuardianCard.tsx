@@ -1,11 +1,10 @@
 import React from 'react';
 import { View } from 'react-native';
 import { evaluatePocketGuardian } from '@/core/guardian';
-import { useAppState } from '@/state/app';
 import type { CompanionSnapshot } from '@/state/companion';
 import { Card } from './Card';
 import { Icon } from './Icon';
-import { getPalette } from './palette';
+import { usePalette } from './ThemeContext';
 import { Text } from './Text';
 
 export interface PocketGuardianCardProps {
@@ -14,8 +13,7 @@ export interface PocketGuardianCardProps {
 }
 
 export function PocketGuardianCard({ companion, className }: PocketGuardianCardProps) {
-  const { settings } = useAppState();
-  const palette = getPalette(settings.theme);
+  const palette = usePalette();
 
   const status = evaluatePocketGuardian(companion.batteryLevel, companion.batteryTempC);
   if (!status.hasAlert) return null;

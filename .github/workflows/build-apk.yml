@@ -94,7 +94,7 @@ jobs:
           name: Pillion-${{ steps.bump.outputs.new_version }}
           path: ${{ steps.apk.outputs.apk_path }}
 
-      - name: Push version bump and root APK safely
+      - name: Push version bump safely
         id: push_release
         run: |
           git config user.name "github-actions[bot]"
@@ -102,7 +102,8 @@ jobs:
 
           BUILT_APK="${{ github.workspace }}/${{ steps.apk.outputs.apk_path }}"
           TARGET_VER="${{ steps.bump.outputs.new_version }}"
-          cp "$BUILT_APK" /tmp/built-pillion.apk
+          cp "$BUILT_APK" "/tmp/Pillion-${TARGET_VER}.apk"
+          cp "$BUILT_APK" "/tmp/Pillion-release.apk"
 
           for attempt in 1 2 3 4 5; do
             git fetch origin main
@@ -122,11 +123,8 @@ jobs:
             "
 
             git rm -f Pillion-*.apk CompanionApp.apk 2>/dev/null || true
-            cp /tmp/built-pillion.apk "./Pillion-${TARGET_VER}.apk"
-            cp /tmp/built-pillion.apk "./Pillion-release.apk"
-
-            git add -f "Pillion-${TARGET_VER}.apk" "Pillion-release.apk" app.json package.json
-            git commit -m "chore(release): bump version to ${TARGET_VER} and update APK [skip ci]"
+            git add app.json package.json
+            git commit -m "chore(release): bump version to ${TARGET_VER} [skip ci]"
 
             if git push origin main; then
               echo "release_ver=${TARGET_VER}" >> "$GITHUB_OUTPUT"
@@ -150,13 +148,13 @@ jobs:
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" \
-              "Pillion-${RELEASE_VER}.apk" \
-              "Pillion-release.apk" \
+              "/tmp/Pillion-${RELEASE_VER}.apk" \
+              "/tmp/Pillion-release.apk" \
               --clobber
           else
             gh release create "$TAG" \
-              "Pillion-${RELEASE_VER}.apk" \
-              "Pillion-release.apk" \
+              "/tmp/Pillion-${RELEASE_VER}.apk" \
+              "/tmp/Pillion-release.apk" \
               --title "Pillion ${RELEASE_VER}" \
               --notes "Production signed APK for Pillion ${RELEASE_VER}"
           fi

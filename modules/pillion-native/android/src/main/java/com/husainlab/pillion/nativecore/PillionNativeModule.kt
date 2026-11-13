@@ -159,6 +159,7 @@ class PillionNativeModule : Module() {
     OnDestroy {
       mainHandler.removeCallbacks(stateChangeRunnable)
       PillionStateStore.setModuleListener(null)
+      stopGpsSpeedTracking()
       stopServerInternal()
       reconnectJob?.cancel()
       callWatchdogJob?.cancel()
@@ -392,6 +393,8 @@ class PillionNativeModule : Module() {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
       }
+    } else {
+      permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
@@ -574,6 +577,7 @@ class PillionNativeModule : Module() {
       return
     }
     if (!isConnecting.compareAndSet(false, true)) return
+    var socket: BluetoothSocket? = null
     try {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
         ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
@@ -581,16 +585,24 @@ class PillionNativeModule : Module() {
         updateStatus("Permission denied")
         return
       }
+      try {
+        adapter.cancelDiscovery()
+      } catch (_: SecurityException) {}
       updateStatus(connectingStatus)
       val device: BluetoothDevice = adapter.getRemoteDevice(address)
-      val socket = device.createRfcommSocketToServiceRecord(APP_UUID)
-      socket.connect()
-      manageConnectedSocket(socket)
+      val created = device.createRfcommSocketToServiceRecord(APP_UUID)
+      socket = created
+      created.connect()
+      manageConnectedSocket(created)
+      socket = null
     } catch (_: IOException) {
+      try { socket?.close() } catch (_: Exception) {}
       updateStatus("Disconnected")
     } catch (_: SecurityException) {
+      try { socket?.close() } catch (_: Exception) {}
       updateStatus("Permission denied")
     } catch (_: IllegalArgumentException) {
+      try { socket?.close() } catch (_: Exception) {}
       updateStatus("Disconnected")
     } finally {
       isConnecting.set(false)
@@ -1036,25 +1048,24 @@ class PillionNativeModule : Module() {
     }
 
     override fun run() {
-      writerThread.start()
-      val reader = mmInStream.bufferedReader()
-      while (!closed.get()) {
-        try {
+      try {
+        writerThread.start()
+        val reader = mmInStream.bufferedReader()
+        while (!closed.get()) {
           val line = reader.readLine() ?: break
           if (line.isNotEmpty()) {
             PillionStateStore.applyPacket(line, isSenderMode)
           }
-        } catch (_: IOException) {
-          break
         }
-      }
-      closed.set(true)
-      writerThread.interrupt()
-      if (connectedThread === this || activeConnectedThread === this) {
-        connectedThread = null
-        activeConnectedThread = null
-        PillionStateStore.resetTransientState()
-        updateStatus("Disconnected")
+      } catch (_: IOException) {
+      } finally {
+        cancel()
+        if (connectedThread === this || activeConnectedThread === this) {
+          connectedThread = null
+          activeConnectedThread = null
+          PillionStateStore.resetTransientState()
+          updateStatus("Disconnected")
+        }
       }
     }
 

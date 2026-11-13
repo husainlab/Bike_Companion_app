@@ -44,8 +44,7 @@ import {
   VolumeX,
   X,
 } from 'lucide-react-native';
-import { useAppState } from '@/state/app';
-import { getPalette } from './palette';
+import { usePalette } from './ThemeContext';
 
 export const PILLION_ICONS = {
   alert: AlertTriangle,
@@ -103,8 +102,7 @@ export interface IconProps {
 }
 
 export function Icon({ name, size = 20, color, strokeWidth = 2.2 }: IconProps) {
-  const { settings } = useAppState();
-  const palette = getPalette(settings.theme);
+  const palette = usePalette();
   const Component = PILLION_ICONS[name];
   return <Component size={size} color={color ?? palette.foreground} strokeWidth={strokeWidth} />;
 }

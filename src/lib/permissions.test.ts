@@ -17,6 +17,8 @@ vi.mock('react-native', () => ({
       BLUETOOTH_SCAN: 'android.permission.BLUETOOTH_SCAN',
       BLUETOOTH_ADVERTISE: 'android.permission.BLUETOOTH_ADVERTISE',
       POST_NOTIFICATIONS: 'android.permission.POST_NOTIFICATIONS',
+      ACCESS_FINE_LOCATION: 'android.permission.ACCESS_FINE_LOCATION',
+      ACCESS_COARSE_LOCATION: 'android.permission.ACCESS_COARSE_LOCATION',
     },
     RESULTS: {
       GRANTED: 'granted',
@@ -27,7 +29,7 @@ vi.mock('react-native', () => ({
 }));
 
 describe('runtime permissions matrix', () => {
-  it('requests only Bluetooth and notification permissions in Handlebar (receiver) mode', () => {
+  it('requests Bluetooth, location (for speed volume), and notification permissions in Handlebar (receiver) mode', () => {
     const receiverPerms = requiredAndroidPermissions('receiver');
     expect(receiverPerms).not.toContain('android.permission.READ_PHONE_STATE');
     expect(receiverPerms).not.toContain('android.permission.READ_CALL_LOG');
@@ -36,6 +38,8 @@ describe('runtime permissions matrix', () => {
     expect(receiverPerms).not.toContain('android.permission.ANSWER_PHONE_CALLS');
     expect(receiverPerms).toContain('android.permission.BLUETOOTH_CONNECT');
     expect(receiverPerms).toContain('android.permission.POST_NOTIFICATIONS');
+    expect(receiverPerms).toContain('android.permission.ACCESS_FINE_LOCATION');
+    expect(receiverPerms).toContain('android.permission.ACCESS_COARSE_LOCATION');
   });
 
   it('requests telephony, call log, contacts and advertise in Pocket Sender mode', () => {

@@ -326,6 +326,45 @@ describe('companion bridge ride handlers & lifecycle', () => {
     });
   });
 
+  it('preserves isAuto on volume HUD when volume changes right after auto-volume trigger', async () => {
+    resetCompanionBridgeForTests();
+    await initCompanionBridge('receiver', false, true);
+
+    const connectedSnapshot: CompanionSnapshot = {
+      ...mocks.snapshot,
+      connectionStatus: 'Connected',
+      currentSpeedKmh: 0,
+      volumePercent: 70,
+    };
+    for (const listener of mocks.listeners) {
+      listener(connectedSnapshot);
+    }
+
+    // Trigger auto-volume shift
+    const highwaySnapshot: CompanionSnapshot = {
+      ...connectedSnapshot,
+      currentSpeedKmh: 65,
+    };
+    for (const listener of mocks.listeners) {
+      listener(highwaySnapshot);
+    }
+    expect(getVolumeHudState().isAuto).toBe(true);
+
+    // Incoming VOLUME confirmation packet arrives ~200ms later with volume 84
+    const confirmedSnapshot: CompanionSnapshot = {
+      ...highwaySnapshot,
+      volumePercent: 84,
+    };
+    for (const listener of mocks.listeners) {
+      listener(confirmedSnapshot);
+    }
+    expect(getVolumeHudState()).toMatchObject({
+      visible: true,
+      percent: 84,
+      isAuto: true,
+    });
+  });
+
   it('clears session missed calls and transmits command to pocket phone', async () => {
     resetCompanionBridgeForTests();
     mocks.sendCommand.mockClear();

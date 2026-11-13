@@ -101,6 +101,7 @@ class PillionNotificationListener : NotificationListenerService() {
       lastTitle = ""
       lastArtist = ""
       checkAndSendMediaUpdate()
+      PillionStateStore.applyPacket("NOTIF_CLEAR_ALL", false)
       PillionStateStore.sendMessage("NOTIF_CLEAR_ALL")
       try {
         activeNotifications?.forEach { sbn ->
@@ -703,6 +704,7 @@ class PillionNotificationListener : NotificationListenerService() {
     if (sbn.packageName == packageName) return
     val key = PillionProtocol.escapeKey(sbn.key)
     trackedNotifications.remove(key)
+    PillionStateStore.applyPacket("NOTIF_REMOVE|$key", false)
     PillionStateStore.sendMessage("NOTIF_REMOVE|$key")
     if (sbn.notification.category == Notification.CATEGORY_CALL ||
       sbn.notification.category == Notification.CATEGORY_MISSED_CALL ||

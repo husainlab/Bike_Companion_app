@@ -184,7 +184,8 @@ function handleSnapshotTransition(next: CompanionSnapshot): void {
 
   const currentVol = next.volumePercent;
   if (prevVolumePercent !== -1 && currentVol !== prevVolumePercent) {
-    showVolumeHud(currentVol, false);
+    const isRecentAuto = Date.now() - lastSpeedVolumeTransitionMs < 1500;
+    showVolumeHud(currentVol, isRecentAuto);
   }
   prevVolumePercent = currentVol;
 

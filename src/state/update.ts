@@ -161,7 +161,7 @@ async function checkLatestViaTagsFallback(): Promise<AvailableUpdate | null> {
 
   return {
     version,
-    apk: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/raw/main/${APP_DISPLAY_PREFIX}-release.apk`,
+    apk: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest/download/${APP_DISPLAY_PREFIX}-release.apk`,
     page: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tag/${first.name}`,
     notes: '',
   };

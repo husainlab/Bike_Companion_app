@@ -12,6 +12,7 @@ module.exports = function withPillionServices(config) {
     const requiredFeatures = [
       'android.hardware.telephony',
       'android.hardware.bluetooth',
+      'android.hardware.location.gps',
     ];
     for (const feature of requiredFeatures) {
       const exists = manifest['uses-feature'].some(

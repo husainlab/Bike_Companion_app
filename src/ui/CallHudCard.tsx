@@ -2,12 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { sendCockpitCommand } from '@/data/companion';
 import { formatCallElapsed } from '@/lib/time';
-import { useAppState } from '@/state/app';
 import type { CompanionSnapshot } from '@/state/companion';
 import { Button } from './Button';
 import { Card } from './Card';
 import { Icon } from './Icon';
-import { getPalette } from './palette';
+import { usePalette } from './ThemeContext';
 import { Text } from './Text';
 
 export interface CallHudCardProps {
@@ -19,8 +18,7 @@ export interface CallHudCardProps {
 }
 
 export function CallHudCard({ companion, className }: CallHudCardProps) {
-  const { settings } = useAppState();
-  const palette = getPalette(settings.theme);
+  const palette = usePalette();
   const [now, setNow] = useState(() => Date.now());
 
   const isLiveCall = companion.isCallActive && !companion.isCallIncoming;

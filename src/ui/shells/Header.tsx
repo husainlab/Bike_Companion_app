@@ -1,9 +1,8 @@
 import React from 'react';
 import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppState } from '@/state/app';
 import { Icon } from '@/ui/Icon';
-import { getPalette } from '@/ui/palette';
+import { usePalette } from '@/ui/ThemeContext';
 import { PillionMark } from '@/ui/PillionMark';
 import { Press } from '@/ui/Press';
 import { Text } from '@/ui/Text';
@@ -17,8 +16,7 @@ export interface HeaderProps {
 
 export function Header({ title, eyebrow, onBack, rightSlot }: HeaderProps) {
   const insets = useSafeAreaInsets();
-  const { settings } = useAppState();
-  const palette = getPalette(settings.theme);
+  const palette = usePalette();
 
   return (
     <View

@@ -13,8 +13,7 @@ expo-env.d.ts
 .vitest/
 *.db
 modules/*/android/build/
-/google-maps-*.apk
-/uptodown-*.apk
+*.apk
 
 # Keystores (release.keystore is committed intentionally to keep consistent APK updates)
 credentials/*.jks

@@ -116,7 +116,7 @@ describe('in-app GitHub Releases updater state', () => {
 
     const found = await checkForAppUpdate(true);
     expect(found?.version).toBe('1.5.0');
-    expect(found?.apk).toContain('/raw/main/Pillion-release.apk');
+    expect(found?.apk).toContain('/releases/latest/download/Pillion-release.apk');
   });
 
   it('supports putOffUpdate and setUpdateCheck', async () => {

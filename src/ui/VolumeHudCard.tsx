@@ -1,8 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
 import { Icon } from '@/ui/Icon';
-import { getPalette } from '@/ui/palette';
-import { useAppState } from '@/state/app';
+import { usePalette } from '@/ui/ThemeContext';
 import { Text } from '@/ui/Text';
 
 export interface VolumeHudCardProps {
@@ -18,8 +17,7 @@ export function VolumeHudCard({
   isAuto,
   speedKmh = 0,
 }: VolumeHudCardProps) {
-  const { settings } = useAppState();
-  const palette = getPalette(settings.theme);
+  const palette = usePalette();
 
   if (!visible) return null;
 

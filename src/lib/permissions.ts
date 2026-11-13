@@ -21,6 +21,13 @@ export function requiredAndroidPermissions(mode: RelayMode = 'sender'): Permissi
     }
   }
 
+  if (mode === 'receiver') {
+    list.push(
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION
+    );
+  }
+
   if (api >= 31) {
     if (PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT) {
       list.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);

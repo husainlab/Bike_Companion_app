@@ -70,6 +70,12 @@ export function MediaSeekBar({
   return (
     <View
       onLayout={handleLayout}
+      onStartShouldSetResponder={() => !disabled && durationMs > 0}
+      onMoveShouldSetResponder={() => !disabled && durationMs > 0}
+      onResponderGrant={handleTouchStart}
+      onResponderMove={handleTouchMove}
+      onResponderRelease={handleTouchEnd}
+      onResponderTerminate={handleTouchCancel}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
