@@ -45,6 +45,14 @@ class PillionOverlayService : Service() {
   companion object {
     private const val CHANNEL_ID = "pillion_overlay_channel"
     private const val FOREGROUND_NOTIF_ID = 4109
+    // Pre-parsed AMOLED color constants — avoids Color.parseColor on every render pass
+    val COLOR_ORANGE = android.graphics.Color.parseColor("#FF5A1F")
+    val COLOR_EMERALD = android.graphics.Color.parseColor("#00E096")
+    val COLOR_CRIMSON = android.graphics.Color.parseColor("#FF453A")
+    val COLOR_CARD_BG = android.graphics.Color.parseColor("#0B0B0C")
+    val COLOR_SURFACE_MUTED = android.graphics.Color.parseColor("#141516")
+    val COLOR_BORDER = android.graphics.Color.parseColor("#242824")
+    val COLOR_MUTED = android.graphics.Color.parseColor("#B5BAB3")
   }
 
   private enum class WidgetTab { MEDIA, CALLS, ALERTS }
@@ -548,12 +556,12 @@ class PillionOverlayService : Service() {
   }
 
   private fun patchDynamicViews() {
-    val orange = Color.parseColor("#FF5A1F")
-    val emerald = Color.parseColor("#00E096")
-    val crimson = Color.parseColor("#FF453A")
-    val cardBg = Color.parseColor("#0B0B0C")
-    val border = Color.parseColor("#242824")
-    val muted = Color.parseColor("#B5BAB3")
+    val orange = COLOR_ORANGE
+    val emerald = COLOR_EMERALD
+    val crimson = COLOR_CRIMSON
+    val cardBg = COLOR_CARD_BG
+    val border = COLOR_BORDER
+    val muted = COLOR_MUTED
     val connected = PillionStateStore.connectionStatus == "Connected"
     val level = PillionStateStore.batteryLevel
     val tempC = PillionStateStore.batteryTempC
@@ -619,13 +627,13 @@ class PillionOverlayService : Service() {
     clearViewRefs()
     root.removeAllViews()
 
-    val orange = Color.parseColor("#FF5A1F")
-    val emerald = Color.parseColor("#00E096")
-    val crimson = Color.parseColor("#FF453A")
-    val cardBg = Color.parseColor("#0B0B0C")
-    val surfaceMuted = Color.parseColor("#141516")
-    val border = Color.parseColor("#242824")
-    val muted = Color.parseColor("#B5BAB3")
+    val orange = COLOR_ORANGE
+    val emerald = COLOR_EMERALD
+    val crimson = COLOR_CRIMSON
+    val cardBg = COLOR_CARD_BG
+    val surfaceMuted = COLOR_SURFACE_MUTED
+    val border = COLOR_BORDER
+    val muted = COLOR_MUTED
 
     val popup = popupNotification
     if (!isExpanded && popup != null) {
@@ -955,12 +963,8 @@ class PillionOverlayService : Service() {
           padH = 6,
           padV = if (isLandscape) 3 else 5
         ) {
+          // Send the command; actual state update flows from telephony callback via startCallWatchdog
           PillionStateStore.sendMessage("/call/decline")
-          PillionStateStore.isCallActive = false
-          PillionStateStore.isCallIncoming = false
-          PillionStateStore.callStartedAtMs = 0L
-          PillionStateStore.notifyChanged()
-          render()
         }.apply {
           layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
@@ -1071,12 +1075,8 @@ class PillionOverlayService : Service() {
           crimson,
           textSp = 12f
         ) {
+          // Send the command; actual state update flows from telephony callback via startCallWatchdog
           PillionStateStore.sendMessage("/call/decline")
-          PillionStateStore.isCallActive = false
-          PillionStateStore.isCallIncoming = false
-          PillionStateStore.callStartedAtMs = 0L
-          PillionStateStore.notifyChanged()
-          render()
         }.apply {
           layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })

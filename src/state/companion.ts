@@ -27,8 +27,14 @@ export interface VolumeHudState {
   updatedAt: number;
 }
 
+// --- Module-level singleton state ---
+// These live for the lifetime of the JS runtime (single process on RN).
+// resetCompanionBridgeForTests() resets all of them for unit tests.
+// initCompanionBridge() is guarded by `started` — the first call wins and
+// registers the native subscription; subsequent calls only update config flags.
 let snapshot: CompanionSnapshot = EMPTY_SNAPSHOT;
 const listeners = new Set<() => void>();
+/** True once subscribeCompanionState has been called. Only the first initCompanionBridge() call sets this. */
 let started = false;
 let rideHandlers: CompanionRideHandlers = {};
 let prevStatus: string = EMPTY_SNAPSHOT.connectionStatus;
@@ -38,6 +44,7 @@ let autoStartOverlayEnabled = false;
 let autoVolumeEnabled = false;
 let currentSpeedVolumeBracket = 0;
 let lastSpeedVolumeTransitionMs = 0;
+/** Sentinel: -1 means "first tick — don't show HUD". */
 let prevVolumePercent = -1;
 
 let volumeHudState: VolumeHudState = {
@@ -205,6 +212,8 @@ function handleSnapshotTransition(next: CompanionSnapshot): void {
       if (result.shouldUpdateBracket) {
         currentSpeedVolumeBracket = result.targetBracket;
         lastSpeedVolumeTransitionMs = now;
+        // Show an estimated percentage immediately for responsiveness;
+        // the HUD will be updated with the real value when the VOLUME| packet arrives (~100-300ms).
         const delta = result.action === 'volume_up' ? result.steps * 7 : -result.steps * 7;
         const estPct = Math.max(0, Math.min(100, (next.volumePercent || 70) + delta));
         showVolumeHud(estPct, true);

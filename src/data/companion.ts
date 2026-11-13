@@ -130,7 +130,10 @@ export async function replyToMirroredNotification(
 ): Promise<void> {
   const cleaned = text.trim();
   if (!key || !cleaned) return;
-  await sendCockpitCommand(`/notif/reply|${key}|${cleaned}`);
+  // Sanitize reply body: strip newlines and pipes that would corrupt the SPP line frame
+  const sanitized = cleaned.replace(/[\n\r|]/g, ' ').trim();
+  if (!sanitized) return;
+  await sendCockpitCommand(`/notif/reply|${key}|${sanitized}`);
 }
 
 export async function launchLocalGoogleMaps(splitScreen: boolean): Promise<boolean> {

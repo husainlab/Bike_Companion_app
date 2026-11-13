@@ -31,7 +31,12 @@ export class SqliteStore implements PillionStore {
       await db.execAsync(
         'PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;'
       );
+      // Run schema migrations gated on PRAGMA user_version
+      const versionRow = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+      const schemaVersion = versionRow?.user_version ?? 0;
+
       await db.withExclusiveTransactionAsync(async (txn) => {
+        // v0 → baseline schema
         await txn.execAsync(`
           CREATE TABLE IF NOT EXISTS app_settings (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -56,11 +61,17 @@ export class SqliteStore implements PillionStore {
             notifications_relayed INTEGER NOT NULL
           );
         `);
-        try {
-          await txn.execAsync(
-            'ALTER TABLE app_settings ADD COLUMN auto_volume_enabled INTEGER NOT NULL DEFAULT 0;'
-          );
-        } catch {}
+        // v0 → v1: add auto_volume_enabled column (only needed on databases created before v1)
+        if (schemaVersion < 1) {
+          try {
+            await txn.execAsync(
+              'ALTER TABLE app_settings ADD COLUMN auto_volume_enabled INTEGER NOT NULL DEFAULT 0;'
+            );
+          } catch {
+            // Column already exists (new installs that created the table with it already)
+          }
+          await txn.execAsync('PRAGMA user_version = 1');
+        }
         await txn.runAsync(
           `INSERT OR IGNORE INTO app_settings (id, relay_mode, theme, keep_awake_on_ride, auto_start_overlay, auto_volume_enabled, onboarding_complete)
            VALUES (1, ?, ?, ?, ?, ?, ?)`,

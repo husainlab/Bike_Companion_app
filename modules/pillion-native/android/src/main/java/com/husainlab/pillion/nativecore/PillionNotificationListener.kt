@@ -27,6 +27,7 @@ import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import androidx.core.app.ActivityCompat
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 
 class PillionNotificationListener : NotificationListenerService() {
   private data class StoredNotificationEntry(
@@ -52,6 +53,10 @@ class PillionNotificationListener : NotificationListenerService() {
   @Suppress("DEPRECATION")
   private var phoneStateListenerRef: PhoneStateListener? = null
   @Volatile private var lastSentCallKey: String = ""
+
+  private val contactLookupExecutor = Executors.newSingleThreadExecutor { r ->
+    Thread(r, "PillionContactLookup").apply { isDaemon = true }
+  }
 
   private val sessionListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
     updateControllers(controllers)
@@ -237,6 +242,7 @@ class PillionNotificationListener : NotificationListenerService() {
 
   override fun onDestroy() {
     teardownCallListener()
+    contactLookupExecutor.shutdown()
     PillionStateStore.mediaSeekHandler = null
     super.onDestroy()
   }
@@ -430,17 +436,37 @@ class PillionNotificationListener : NotificationListenerService() {
 
   private fun emitCallRinging(phoneNumber: String?) {
     wasRinging = true
-    if (!phoneNumber.isNullOrEmpty()) {
-      lastCallerNumber = PillionProtocol.sanitizeField(phoneNumber)
-      lastCallerName = PillionProtocol.sanitizeField(getContactName(phoneNumber))
+    val sanitizedNumber = if (!phoneNumber.isNullOrEmpty()) {
+      PillionProtocol.sanitizeField(phoneNumber)
+    } else {
+      lastCallerNumber
     }
-    val name = lastCallerName.ifEmpty { "Incoming Call" }
+    if (sanitizedNumber.isNotEmpty()) {
+      lastCallerNumber = sanitizedNumber
+    }
+    // Emit immediately with number as placeholder; resolve contact name in background
+    val placeholder = lastCallerName.ifEmpty { "Incoming Call" }
     PillionStateStore.isCallActive = true
     PillionStateStore.isCallIncoming = true
-    PillionStateStore.callerName = name
+    PillionStateStore.callerName = placeholder
     PillionStateStore.callerNumber = lastCallerNumber
-    emitCallPacket("CALL_IN|$name|$lastCallerNumber")
+    emitCallPacket("CALL_IN|$placeholder|$lastCallerNumber")
     PillionStateStore.notifyChanged()
+
+    // Background contact name resolution — updates caller name once found
+    if (!phoneNumber.isNullOrEmpty()) {
+      contactLookupExecutor.execute {
+        val resolved = PillionProtocol.sanitizeField(getContactName(phoneNumber))
+        if (resolved.isNotEmpty() && resolved != phoneNumber) {
+          lastCallerName = resolved
+          if (PillionStateStore.isCallActive) {
+            PillionStateStore.callerName = resolved
+            emitCallPacket("CALL_IN|$resolved|$lastCallerNumber")
+            PillionStateStore.notifyChanged()
+          }
+        }
+      }
+    }
   }
 
   private fun emitCallEnded() {

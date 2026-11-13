@@ -44,7 +44,7 @@ By placing those Kotlin classes in `modules/pillion-native/` and declaring their
   - Fail-safe boot watchdog (`bootApp()` timeout of 2,000ms and font watchdog of 1,200ms) prevents `_layout.tsx` from ever being trapped in a `return null` blank screen. Even if SQLite WAL transactions or font loaders delay, the app boots into fallback system typography within 2 seconds.
   - `enableFreeze` is disabled (`false`) to eliminate React 18/19 screen unfreezing deadlocks when returning from background.
 - **Throttled Event Bridge & IPC Caching**:
-  - High-frequency state transitions (incoming calls, media ticks, volume changes) are throttled to a 100ms debounce posted to `Looper.getMainLooper()`, checking `reactContext.hasActiveReactInstance()` before dispatching to prevent flooding paused JS runtimes.
+  - High-frequency state transitions (incoming calls, media ticks, volume changes) are throttled to a 100ms debounce posted to `Looper.getMainLooper()`, checking `appContext.hasActiveReactInstance` before dispatching to prevent flooding paused JS runtimes.
   - Android IPC calls (`hasNotificationAccess`, `canDrawOverlays`, `hasRequiredPermissions`) are cached with a 3-second TTL instead of executing 10+ synchronous IPC trips per state tick.
 - **Clean Listener Ownership**:
   - `PillionStateStore` maintains a dedicated `moduleListener` slot so each newly created `PillionNativeModule` automatically overwrites and replaces any stale listener lambda referencing destroyed React Contexts.

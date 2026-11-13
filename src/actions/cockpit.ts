@@ -124,7 +124,9 @@ export async function startRideSession(
     });
   }
 
-  const id = `ride-${nowMs}-${Math.floor(Math.random() * 10_000)}`;
+  const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? `ride-${nowMs}-${crypto.randomUUID()}`
+    : `ride-${nowMs}-${Math.floor(Math.random() * 10_000)}`;
   await logRideSession(store, {
     id,
     mode,

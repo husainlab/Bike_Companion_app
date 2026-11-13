@@ -60,7 +60,9 @@ export function useScreen<T>(
   const version = useDataVersion();
   const ready = useScreenReady();
   const key = cacheKey(screenId, params);
-  const initialHit = screenCache.get(key) as CacheEntry<T> | undefined;
+  const rawHit = screenCache.get(key) as CacheEntry<T> | undefined;
+  // Only treat cache as a valid initial hit when it matches the current data version
+  const initialHit = rawHit?.version === version ? rawHit : undefined;
 
   const [data, setData] = useState<T | undefined>(() => initialHit?.data);
   const [loading, setLoading] = useState<boolean>(() => !initialHit);

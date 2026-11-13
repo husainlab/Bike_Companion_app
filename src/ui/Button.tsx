@@ -1,8 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, View } from 'react-native';
-import { useAppState } from '@/state/app';
 import { Icon, type PillionIconName } from './Icon';
-import { getPalette } from './palette';
+import { usePalette } from './ThemeContext';
 import { Press } from './Press';
 import { Text } from './Text';
 
@@ -29,8 +28,7 @@ export function Button({
   compact = false,
   className = '',
 }: ButtonProps) {
-  const { settings } = useAppState();
-  const palette = getPalette(settings.theme);
+  const palette = usePalette();
 
   const containerStyle =
     tone === 'primary'

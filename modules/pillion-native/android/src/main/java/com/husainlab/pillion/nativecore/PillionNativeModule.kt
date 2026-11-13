@@ -91,8 +91,7 @@ class PillionNativeModule : Module() {
   private val stateChangeRunnable = Runnable {
     stateChangePending = false
     try {
-      val reactCtx = appContext.reactContext
-      if (reactCtx != null && reactCtx.hasActiveReactInstance()) {
+      if (appContext.hasActiveReactInstance) {
         sendEvent("onStateChange", buildSnapshotMap())
       }
     } catch (_: Throwable) {}
@@ -952,7 +951,12 @@ class PillionNativeModule : Module() {
           PillionStateStore.notifyChanged()
         }
       }
-    } catch (_: Exception) {}
+    } catch (e: SecurityException) {
+      android.util.Log.w("Pillion", "Permission denied executing command '$path': ${e.message}")
+      PillionStateStore.notifyChanged()
+    } catch (e: Exception) {
+      android.util.Log.e("Pillion", "Error executing command '$path'", e)
+    }
   }
 
   private fun buildSnapshotMap(): Map<String, Any?> = mapOf(
@@ -1011,7 +1015,7 @@ class PillionNativeModule : Module() {
   private inner class ConnectedThread(private val socket: BluetoothSocket) : Thread() {
     private val mmInStream: InputStream = socket.inputStream
     private val mmOutStream: OutputStream = socket.outputStream
-    private val writeQueue = LinkedBlockingQueue<ByteArray>(512)
+    private val writeQueue = LinkedBlockingQueue<ByteArray>(1024)
     private val closed = AtomicBoolean(false)
     private val writerThread = Thread {
       while (!closed.get()) {
@@ -1056,7 +1060,10 @@ class PillionNativeModule : Module() {
 
     fun write(bytes: ByteArray) {
       if (closed.get()) return
-      writeQueue.offer(bytes.copyOf())
+      val accepted = writeQueue.offer(bytes.copyOf())
+      if (!accepted) {
+        android.util.Log.w("Pillion", "SPP write queue full — frame dropped (${bytes.size} bytes)")
+      }
     }
 
     fun cancel() {
