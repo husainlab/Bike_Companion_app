@@ -275,9 +275,13 @@ export async function initCompanionBridge(
   }
   await setCompanionRelayRole(relayMode).catch(() => {});
   await setAutoReconnect(isReceiver).catch(() => {});
-  snapshot = await getCompanionSnapshot();
-  handleSnapshotTransition(snapshot);
-  emit();
+  try {
+    snapshot = await getCompanionSnapshot();
+    handleSnapshotTransition(snapshot);
+    emit();
+  } catch {
+    // If native module is still initializing or in transition, rely on subscribeCompanionState
+  }
 }
 
 export async function teardownPreviousRelayMode(previousMode: 'receiver' | 'sender'): Promise<void> {

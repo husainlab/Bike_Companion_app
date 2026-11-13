@@ -1,5 +1,5 @@
 import { colorScheme } from 'nativewind';
-import type { ThemePreference } from '@/core/types';
+import { DEFAULT_APP_SETTINGS, type AppSettings, type ThemePreference } from '@/core/types';
 import { SqliteStore } from '@/data/db';
 import { memoStore } from '@/data/memo';
 import type { PillionStore } from '@/data/store';
@@ -20,6 +20,7 @@ export { getAppState, setAppSettingsLocal, subscribeAppState, useAppState };
 const baseStore = new SqliteStore();
 const store: PillionStore = memoStore(baseStore, getDataVersion);
 let bootPromise: Promise<AppState> | null = null;
+const BOOT_TIMEOUT_MS = 2000;
 
 export function getStore(): PillionStore {
   return store;
@@ -41,9 +42,26 @@ export async function bootApp(): Promise<AppState> {
   if (bootPromise) return bootPromise;
 
   bootPromise = (async () => {
-    await store.init();
-    const settings = await store.getSettings();
-    return setAppStateBooted(settings);
+    const bootWork = async (): Promise<AppSettings> => {
+      await store.init();
+      return await store.getSettings();
+    };
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<AppSettings>((resolve) => {
+      timer = setTimeout(() => {
+        resolve({ ...DEFAULT_APP_SETTINGS });
+      }, BOOT_TIMEOUT_MS);
+    });
+
+    try {
+      const settings = await Promise.race([bootWork(), timeoutPromise]);
+      if (timer) clearTimeout(timer);
+      return setAppStateBooted(settings);
+    } catch (err) {
+      if (timer) clearTimeout(timer);
+      throw err;
+    }
   })().catch((err) => {
     bootPromise = null;
     throw err;

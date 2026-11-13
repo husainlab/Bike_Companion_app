@@ -122,6 +122,7 @@ class PillionOverlayService : Service() {
   @Suppress("DEPRECATION")
   private fun applyKeepAwake(enabled: Boolean) {
     try {
+      rootContainer?.keepScreenOn = enabled
       if (::params.isInitialized) {
         if (enabled) {
           params.flags = params.flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -138,14 +139,14 @@ class PillionOverlayService : Service() {
         if (wakeLock == null) {
           val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
           wakeLock = pm?.newWakeLock(
-            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+            PowerManager.PARTIAL_WAKE_LOCK,
             "pillion:overlay_awake"
           )?.apply {
             setReferenceCounted(false)
           }
         }
         if (wakeLock?.isHeld == false) {
-          wakeLock?.acquire()
+          wakeLock?.acquire(10 * 60 * 1000L)
         }
       } else {
         if (wakeLock?.isHeld == true) {
@@ -301,6 +302,7 @@ class PillionOverlayService : Service() {
       stopSelf()
       return START_NOT_STICKY
     }
+    applyKeepAwake(isKeepScreenAwakeConfigured())
     return START_NOT_STICKY
   }
 
@@ -393,6 +395,7 @@ class PillionOverlayService : Service() {
     val container = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       background = roundedBox(Color.BLACK, Color.parseColor("#242824"), 2, 12)
+      keepScreenOn = keepAwake
     }
 
     return try {
@@ -729,6 +732,22 @@ class PillionOverlayService : Service() {
       }
       root.addView(pillRow)
       syncCallTimer()
+      root.post {
+        val displayMetrics = resources.displayMetrics
+        val viewHeight = root.height
+        val viewWidth = root.width
+        if (viewHeight > 0 && viewWidth > 0 && ::params.isInitialized) {
+          val clampedY = PillionProtocol.clampOverlayCoord(params.y, displayMetrics.heightPixels - viewHeight)
+          val clampedX = PillionProtocol.clampOverlayCoord(params.x, displayMetrics.widthPixels - viewWidth)
+          if (clampedY != params.y || clampedX != params.x) {
+            params.y = clampedY
+            params.x = clampedX
+            try {
+              windowManager.updateViewLayout(root, params)
+            } catch (_: Exception) {}
+          }
+        }
+      }
       return
     }
 
@@ -737,7 +756,7 @@ class PillionOverlayService : Service() {
       resources.displayMetrics.widthPixels > resources.displayMetrics.heightPixels
 
     if (isLandscape) {
-      root.setPadding(dp(10), dp(5), dp(10), dp(5))
+      root.setPadding(dp(8), dp(4), dp(8), dp(4))
     } else {
       root.setPadding(dp(12), dp(10), dp(12), dp(10))
     }
@@ -932,9 +951,9 @@ class PillionOverlayService : Service() {
           crimson,
           Color.WHITE,
           crimson,
-          textSp = 11f,
+          textSp = if (isLandscape) 10f else 11f,
           padH = 6,
-          padV = 5
+          padV = if (isLandscape) 3 else 5
         ) {
           PillionStateStore.sendMessage("/call/decline")
           PillionStateStore.isCallActive = false
@@ -947,7 +966,15 @@ class PillionOverlayService : Service() {
         })
 
         if (isIncoming) {
-          actions.addView(makeButton("ANSWER", emerald, Color.BLACK, emerald, textSp = 11f, padH = 6, padV = 5) {
+          actions.addView(makeButton(
+            "ANSWER",
+            emerald,
+            Color.BLACK,
+            emerald,
+            textSp = if (isLandscape) 10f else 11f,
+            padH = 6,
+            padV = if (isLandscape) 3 else 5
+          ) {
             PillionStateStore.sendMessage("/call/answer")
             PillionStateStore.isCallIncoming = false
             PillionStateStore.isCallActive = true
@@ -1583,6 +1610,22 @@ class PillionOverlayService : Service() {
 
     root.addView(panel)
     syncCallTimer()
+    root.post {
+      val displayMetrics = resources.displayMetrics
+      val viewHeight = root.height
+      val viewWidth = root.width
+      if (viewHeight > 0 && viewWidth > 0 && ::params.isInitialized) {
+        val clampedY = PillionProtocol.clampOverlayCoord(params.y, displayMetrics.heightPixels - viewHeight)
+        val clampedX = PillionProtocol.clampOverlayCoord(params.x, displayMetrics.widthPixels - viewWidth)
+        if (clampedY != params.y || clampedX != params.x) {
+          params.y = clampedY
+          params.x = clampedX
+          try {
+            windowManager.updateViewLayout(root, params)
+          } catch (_: Exception) {}
+        }
+      }
+    }
   }
 
   private fun makeEmptyRow(

@@ -337,7 +337,7 @@ export default function CockpitScreen() {
                       className="flex-1"
                     />
                     <Button
-                      label="Split-Screen"
+                      label="Open Maps"
                       icon="columns"
                       tone="surface"
                       compact

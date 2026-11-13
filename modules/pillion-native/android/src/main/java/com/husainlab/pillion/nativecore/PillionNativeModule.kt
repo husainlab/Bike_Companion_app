@@ -16,7 +16,9 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.CallLog
 import android.provider.ContactsContract
 import android.provider.Settings
@@ -50,9 +52,12 @@ class PillionNativeModule : Module() {
     private const val PREF_AUTO_START_OVERLAY = "auto_start_overlay"
     private const val MAX_SYNC_CONTACTS = 250
     private const val MAX_SYNC_RECENTS = 25
+
+    @Volatile var activeConnectedThread: Any? = null
   }
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+  private val mainHandler = Handler(Looper.getMainLooper())
   @Volatile private var connectedThread: ConnectedThread? = null
   private var reconnectJob: Job? = null
   @Volatile private var autoReconnectEnabled = false
@@ -64,16 +69,75 @@ class PillionNativeModule : Module() {
   @Volatile private var activeServerSocket: BluetoothServerSocket? = null
   @Volatile private var callWatchdogJob: Job? = null
 
+  @Volatile private var cachedNotifAccess: Boolean = false
+  @Volatile private var lastNotifAccessCheckMs: Long = 0L
+
+  @Volatile private var cachedOverlayPermission: Boolean = false
+  @Volatile private var lastOverlayCheckMs: Long = 0L
+
+  @Volatile private var cachedRuntimePermissions: Boolean = false
+  @Volatile private var lastRuntimeCheckMs: Long = 0L
+
+  private val safeContext: Context?
+    get() = appContext.reactContext?.applicationContext ?: appContext.reactContext
+
   private val context: Context
-    get() = appContext.reactContext ?: throw IllegalStateException("React context unavailable")
+    get() = safeContext ?: throw IllegalStateException("React context unavailable")
 
   private val bluetoothAdapter: BluetoothAdapter?
     get() = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
 
-  private val stateListener: () -> Unit = {
+  @Volatile private var stateChangePending = false
+  private val stateChangeRunnable = Runnable {
+    stateChangePending = false
     try {
-      sendEvent("onStateChange", buildSnapshotMap())
+      val reactCtx = appContext.reactContext
+      if (reactCtx != null && reactCtx.hasActiveReactInstance()) {
+        sendEvent("onStateChange", buildSnapshotMap())
+      }
     } catch (_: Throwable) {}
+  }
+
+  private val stateListener: () -> Unit = {
+    if (!stateChangePending) {
+      stateChangePending = true
+      mainHandler.postDelayed(stateChangeRunnable, 100L)
+    }
+  }
+
+  private fun invalidatePermissionCaches() {
+    lastNotifAccessCheckMs = 0L
+    lastOverlayCheckMs = 0L
+    lastRuntimeCheckMs = 0L
+  }
+
+  private fun hasNotificationAccessCached(): Boolean {
+    val now = SystemClock.elapsedRealtime()
+    if (now - lastNotifAccessCheckMs > 3000L) {
+      cachedNotifAccess = hasNotificationAccess()
+      lastNotifAccessCheckMs = now
+    }
+    return cachedNotifAccess
+  }
+
+  private fun hasOverlayPermissionCached(): Boolean {
+    val now = SystemClock.elapsedRealtime()
+    if (now - lastOverlayCheckMs > 3000L) {
+      cachedOverlayPermission = try {
+        safeContext?.let { Settings.canDrawOverlays(it) } ?: false
+      } catch (_: Exception) { false }
+      lastOverlayCheckMs = now
+    }
+    return cachedOverlayPermission
+  }
+
+  private fun hasRequiredPermissionsCached(): Boolean {
+    val now = SystemClock.elapsedRealtime()
+    if (now - lastRuntimeCheckMs > 3000L) {
+      cachedRuntimePermissions = hasRequiredPermissions()
+      lastRuntimeCheckMs = now
+    }
+    return cachedRuntimePermissions
   }
 
   override fun definition() = ModuleDefinition {
@@ -82,13 +146,20 @@ class PillionNativeModule : Module() {
     Events("onStateChange")
 
     OnCreate {
-      PillionStateStore.outgoingSender = { msg -> connectedThread?.write(msg.toByteArray()) }
+      PillionStateStore.outgoingSender = { msg ->
+        val thread = connectedThread ?: (activeConnectedThread as? ConnectedThread)
+        thread?.write(msg.toByteArray())
+      }
       PillionStateStore.commandExecutor = { cmd -> handleIncomingCommand(cmd) }
-      PillionStateStore.addListener(stateListener)
+      PillionStateStore.setModuleListener(stateListener)
+      if (isSenderMode) {
+        startCallWatchdog()
+      }
     }
 
     OnDestroy {
-      PillionStateStore.removeListener(stateListener)
+      mainHandler.removeCallbacks(stateChangeRunnable)
+      PillionStateStore.setModuleListener(null)
       stopServerInternal()
       reconnectJob?.cancel()
       callWatchdogJob?.cancel()
@@ -96,6 +167,7 @@ class PillionNativeModule : Module() {
     }
 
     AsyncFunction("getSnapshot") {
+      invalidatePermissionCaches()
       buildSnapshotMap()
     }
 
@@ -104,10 +176,12 @@ class PillionNativeModule : Module() {
     }
 
     AsyncFunction("requestRuntimePermissions") {
+      invalidatePermissionCaches()
       hasRequiredPermissions()
     }
 
     AsyncFunction("openNotificationListenerSettings") {
+      invalidatePermissionCaches()
       val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       }
@@ -115,6 +189,7 @@ class PillionNativeModule : Module() {
     }
 
     AsyncFunction("openOverlaySettings") {
+      invalidatePermissionCaches()
       val intent = Intent(
         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
         Uri.parse("package:${context.packageName}")
@@ -129,6 +204,7 @@ class PillionNativeModule : Module() {
       autoReconnectEnabled = false
       reconnectJob?.cancel()
       reconnectJob = null
+      startCallWatchdog()
       startServerInternal()
     }
 
@@ -355,8 +431,9 @@ class PillionNativeModule : Module() {
   }
 
   private fun closeCurrentConnection(nextStatus: String) {
-    val previous = connectedThread
+    val previous = connectedThread ?: (activeConnectedThread as? ConnectedThread)
     connectedThread = null
+    activeConnectedThread = null
     previous?.cancel()
     PillionStateStore.resetTransientState()
     updateStatus(nextStatus)
@@ -365,24 +442,27 @@ class PillionNativeModule : Module() {
   private fun startCallWatchdog() {
     if (callWatchdogJob?.isActive == true) return
     callWatchdogJob = scope.launch {
-      val telecom = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
-      val telephony = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+      val telecom = safeContext?.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+      val telephony = safeContext?.getSystemService(Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager
       while (isActive) {
-        delay(1200L)
+        delay(1000L)
         if (!isSenderMode) continue
         if (PillionStateStore.isCallActive) {
           var isActuallyInCall = false
           try {
-            val hasPhonePermission = ActivityCompat.checkSelfPermission(
-              context,
+            val ctx = safeContext
+            val hasPhonePermission = ctx != null && ActivityCompat.checkSelfPermission(
+              ctx,
               Manifest.permission.READ_PHONE_STATE
             ) == PackageManager.PERMISSION_GRANTED
             if (hasPhonePermission) {
-              val telecomInCall = telecom?.isInCall == true
-              val telephonyInCall = telephony?.callState != TelephonyManager.CALL_STATE_IDLE
+              val telecomInCall = try { telecom?.isInCall == true } catch (_: Exception) { false }
+              val telephonyInCall = try {
+                telephony?.callState != android.telephony.TelephonyManager.CALL_STATE_IDLE
+              } catch (_: Exception) { false }
               isActuallyInCall = telecomInCall || telephonyInCall
             } else {
-              isActuallyInCall = telecom?.isInCall == true
+              isActuallyInCall = try { telecom?.isInCall == true } catch (_: Exception) { false }
             }
           } catch (_: Exception) {}
 
@@ -545,9 +625,10 @@ class PillionNativeModule : Module() {
   }
 
   private fun manageConnectedSocket(socket: BluetoothSocket) {
-    val previous = connectedThread
+    val previous = connectedThread ?: (activeConnectedThread as? ConnectedThread)
     val nextThread = ConnectedThread(socket)
     connectedThread = nextThread
+    activeConnectedThread = nextThread
     previous?.cancel()
     nextThread.start()
     updateStatus("Connected")
@@ -560,7 +641,7 @@ class PillionNativeModule : Module() {
     } else {
       val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
       val autoStartOverlay = prefs.getBoolean(PREF_AUTO_START_OVERLAY, false)
-      if (autoStartOverlay && Settings.canDrawOverlays(context) && !PillionStateStore.isOverlayRunning) {
+      if (autoStartOverlay && hasOverlayPermissionCached() && !PillionStateStore.isOverlayRunning) {
         try {
           startOverlayForegroundService()
         } catch (_: Exception) {}
@@ -758,7 +839,7 @@ class PillionNativeModule : Module() {
           PillionStateStore.sendMessage("CALL_ACTIVE|$name|$num")
           PillionStateStore.notifyChanged()
         }
-        path == "/call/decline" -> {
+        path == "/call/decline" || path == "/call/end" -> {
           var ended = false
           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
             ActivityCompat.checkSelfPermission(context, Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED
@@ -922,9 +1003,9 @@ class PillionNativeModule : Module() {
         "timestampMs" to it.timestampMs.toDouble()
       )
     },
-    "hasNotificationAccess" to hasNotificationAccess(),
-    "hasOverlayPermission" to Settings.canDrawOverlays(context),
-    "hasRuntimePermissions" to hasRequiredPermissions()
+    "hasNotificationAccess" to hasNotificationAccessCached(),
+    "hasOverlayPermission" to hasOverlayPermissionCached(),
+    "hasRuntimePermissions" to hasRequiredPermissionsCached()
   )
 
   private inner class ConnectedThread(private val socket: BluetoothSocket) : Thread() {
@@ -965,8 +1046,9 @@ class PillionNativeModule : Module() {
       }
       closed.set(true)
       writerThread.interrupt()
-      if (connectedThread === this) {
+      if (connectedThread === this || activeConnectedThread === this) {
         connectedThread = null
+        activeConnectedThread = null
         PillionStateStore.resetTransientState()
         updateStatus("Disconnected")
       }

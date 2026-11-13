@@ -314,6 +314,7 @@ object PillionStateStore {
   private val recentsList = mutableListOf<RecentCallEntry>()
   private val recentsStaging = mutableListOf<RecentCallEntry>()
   private val listeners = CopyOnWriteArrayList<() -> Unit>()
+  @Volatile private var moduleListener: (() -> Unit)? = null
 
   @Volatile var outgoingSender: ((String) -> Unit)? = null
   @Volatile var commandExecutor: ((String) -> Unit)? = null
@@ -330,10 +331,19 @@ object PillionStateStore {
     listeners.remove(listener)
   }
 
+  fun setModuleListener(listener: (() -> Unit)?) {
+    moduleListener = listener
+  }
+
   fun notifyChanged() {
     for (listener in listeners) {
-      listener()
+      try {
+        listener()
+      } catch (_: Throwable) {}
     }
+    try {
+      moduleListener?.invoke()
+    } catch (_: Throwable) {}
   }
 
   fun sendMessage(message: String) {

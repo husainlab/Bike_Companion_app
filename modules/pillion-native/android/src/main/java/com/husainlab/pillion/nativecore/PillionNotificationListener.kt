@@ -60,6 +60,8 @@ class PillionNotificationListener : NotificationListenerService() {
   private val internalSyncReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
       if (intent?.action != PillionProtocol.ACTION_SYNC) return
+      setupCallListener()
+      registerHandlers()
       val batteryStatus = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
       val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
       val tempRaw = batteryStatus?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
@@ -448,6 +450,7 @@ class PillionNotificationListener : NotificationListenerService() {
     }
     lastCallerName = ""
     lastCallerNumber = ""
+    lastSentCallKey = "CALL_END"
     activeCallAnswerAction = null
     activeCallDeclineAction = null
     try {
@@ -458,7 +461,7 @@ class PillionNotificationListener : NotificationListenerService() {
     PillionStateStore.isCallIncoming = false
     PillionStateStore.callStartedAtMs = 0L
     PillionStateStore.sendMessage("CALL_MUTE|0")
-    emitCallPacket("CALL_END")
+    PillionStateStore.sendMessage("CALL_END")
     PillionStateStore.notifyChanged()
   }
 
@@ -600,6 +603,7 @@ class PillionNotificationListener : NotificationListenerService() {
     val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
 
     if (category == Notification.CATEGORY_CALL || category == Notification.CATEGORY_MISSED_CALL) {
+      setupCallListener()
       if (category == Notification.CATEGORY_MISSED_CALL) {
         emitCallEnded()
         return
@@ -675,7 +679,8 @@ class PillionNotificationListener : NotificationListenerService() {
     trackedNotifications.remove(key)
     PillionStateStore.sendMessage("NOTIF_REMOVE|$key")
     if (sbn.notification.category == Notification.CATEGORY_CALL ||
-      sbn.notification.category == Notification.CATEGORY_MISSED_CALL
+      sbn.notification.category == Notification.CATEGORY_MISSED_CALL ||
+      sbn.notification.extras.containsKey(Notification.EXTRA_CALL_PERSON)
     ) {
       activeCallAnswerAction = null
       activeCallDeclineAction = null

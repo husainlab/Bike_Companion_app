@@ -35,7 +35,7 @@ import { maybeCheckForAppUpdate } from '@/state/update';
 import { AppProviders } from '@/ui/AppProviders';
 import { getPalette } from '@/ui/palette';
 
-enableFreeze(true);
+enableFreeze(false);
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 SplashScreen.setOptions({ duration: 0, fade: false });
@@ -54,8 +54,24 @@ export default function RootLayout() {
     JetBrainsMono_700Bold,
   });
 
+  const [fontTimeoutElapsed, setFontTimeoutElapsed] = useState(false);
   const [booted, setBooted] = useState(false);
   const { settings } = useAppState();
+
+  useEffect(() => {
+    const fontTimer = setTimeout(() => {
+      setFontTimeoutElapsed(true);
+    }, 1200);
+    const bootWatchdog = setTimeout(() => {
+      setBooted(true);
+    }, 2000);
+    return () => {
+      clearTimeout(fontTimer);
+      clearTimeout(bootWatchdog);
+    };
+  }, []);
+
+  const fontsReady = fontsLoaded || fontTimeoutElapsed;
 
   useEffect(() => {
     let active = true;
@@ -106,12 +122,12 @@ export default function RootLayout() {
   }, [settings.keepAwakeOnRide, settings.relayMode]);
 
   useEffect(() => {
-    if (fontsLoaded && booted) {
+    if (fontsReady && booted) {
       SplashScreen.hideAsync().catch(() => {});
     }
-  }, [fontsLoaded, booted]);
+  }, [fontsReady, booted]);
 
-  if (!fontsLoaded || !booted) {
+  if (!fontsReady || !booted) {
     return null;
   }
 
